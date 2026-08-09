@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -45,18 +46,20 @@ def _to_job(row: sqlite3.Row) -> Job:
 class JobsRepo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
+        self._lock = threading.Lock()
 
     def create(self, action: str, params: dict) -> Job:
-        job_id = uuid.uuid4().hex
-        self._conn.execute(
-            "INSERT INTO jobs (id, action, params, status, progress, created_at) "
-            "VALUES (?, ?, ?, 'queued', 0.0, ?)",
-            (job_id, action, json.dumps(params), _now()),
-        )
-        self._conn.commit()
-        job = self.get(job_id)
-        assert job is not None
-        return job
+        with self._lock:
+            job_id = uuid.uuid4().hex
+            self._conn.execute(
+                "INSERT INTO jobs (id, action, params, status, progress, created_at) "
+                "VALUES (?, ?, ?, 'queued', 0.0, ?)",
+                (job_id, action, json.dumps(params), _now()),
+            )
+            self._conn.commit()
+            job = self.get(job_id)
+            assert job is not None
+            return job
 
     def get(self, job_id: str) -> Job | None:
         row = self._conn.execute(
@@ -72,44 +75,49 @@ class JobsRepo:
         return [_to_job(r) for r in rows]
 
     def mark_running(self, job_id: str) -> None:
-        self._conn.execute(
-            "UPDATE jobs SET status = 'running', started_at = ? WHERE id = ?",
-            (_now(), job_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE jobs SET status = 'running', started_at = ? WHERE id = ?",
+                (_now(), job_id),
+            )
+            self._conn.commit()
 
     def mark_done(self, job_id: str) -> None:
-        self._conn.execute(
-            "UPDATE jobs SET status = 'done', progress = 1.0, finished_at = ? "
-            "WHERE id = ?",
-            (_now(), job_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE jobs SET status = 'done', progress = 1.0, finished_at = ? "
+                "WHERE id = ?",
+                (_now(), job_id),
+            )
+            self._conn.commit()
 
     def mark_failed(self, job_id: str, error: str) -> None:
-        self._conn.execute(
-            "UPDATE jobs SET status = 'failed', error = ?, finished_at = ? "
-            "WHERE id = ?",
-            (error, _now(), job_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE jobs SET status = 'failed', error = ?, finished_at = ? "
+                "WHERE id = ?",
+                (error, _now(), job_id),
+            )
+            self._conn.commit()
 
     def update_progress(
         self, job_id: str, progress: float, message: str | None = None
     ) -> None:
-        self._conn.execute(
-            "UPDATE jobs SET progress = ?, message = COALESCE(?, message) "
-            "WHERE id = ?",
-            (progress, message, job_id),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE jobs SET progress = ?, message = COALESCE(?, message) "
+                "WHERE id = ?",
+                (progress, message, job_id),
+            )
+            self._conn.commit()
 
     def add_event(self, job_id: str, level: str, message: str) -> None:
-        self._conn.execute(
-            "INSERT INTO job_events (job_id, ts, level, message) VALUES (?, ?, ?, ?)",
-            (job_id, time.time(), level, message),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO job_events (job_id, ts, level, message) VALUES (?, ?, ?, ?)",
+                (job_id, time.time(), level, message),
+            )
+            self._conn.commit()
 
     def events(self, job_id: str, after_id: int = 0) -> list[JobEvent]:
         rows = self._conn.execute(

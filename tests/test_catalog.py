@@ -39,3 +39,14 @@ def test_foreign_keys_are_enforced(tmp_path):
     except sqlite3.IntegrityError:
         return
     raise AssertionError("foreign key constraint was not enforced")
+
+
+def test_isolation_level_is_autocommit(tmp_path):
+    conn = catalog.connect(tmp_path / "test.db")
+    assert conn.isolation_level is None
+
+
+def test_busy_timeout_is_set(tmp_path):
+    conn = catalog.connect(tmp_path / "test.db")
+    result = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+    assert result == 5000

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 
 from pydantic import BaseModel
 
@@ -20,6 +21,7 @@ class FolderRef(BaseModel):
 class SettingsRepo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
+        self._lock = threading.Lock()
 
     def get(self, key: str, default: str | None = None) -> str | None:
         row = self._conn.execute(
@@ -28,12 +30,13 @@ class SettingsRepo:
         return row["value"] if row else default
 
     def set(self, key: str, value: str) -> None:
-        self._conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, value),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+            self._conn.commit()
 
     def all(self) -> dict[str, str]:
         return {
