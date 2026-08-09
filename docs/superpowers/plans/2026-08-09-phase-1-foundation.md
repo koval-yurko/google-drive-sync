@@ -3422,7 +3422,7 @@ git commit -m "feat: react scaffold, typed api client, application shell"
 - Consumes: `listFolders`, `getSettings`, `putSetting`, `FolderRef`, `DriveFolder`.
 - Produces: `FolderPicker({ title, onSelect, onCancel })` — a modal that browses Drive folders from `root`, supports drilling in and going back, and calls `onSelect(folder: FolderRef)` when the user confirms the folder they are currently viewing.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `web/src/components/FolderPicker.test.tsx`:
 
@@ -3479,19 +3479,19 @@ describe('FolderPicker', () => {
 })
 ```
 
-- [ ] **Step 2: Install the interaction testing library**
+- [x] **Step 2: Install the interaction testing library**
 
 ```bash
 cd "$(git rev-parse --show-toplevel)/web"
 npm install -D @testing-library/user-event
 ```
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [x] **Step 3: Run the test to verify it fails**
 
 Run: `cd web && npm test`
 Expected: FAIL — cannot resolve `./FolderPicker`
 
-- [ ] **Step 4: Write the folder picker**
+- [x] **Step 4: Write the folder picker**
 
 Create `web/src/components/FolderPicker.tsx`:
 
@@ -3577,7 +3577,7 @@ export function FolderPicker({ title, onSelect, onCancel }: Props) {
 }
 ```
 
-- [ ] **Step 5: Write the Settings page**
+- [x] **Step 5: Write the Settings page**
 
 Create `web/src/pages/SettingsPage.tsx`:
 
@@ -3663,12 +3663,12 @@ export function SettingsPage() {
 }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `cd web && npm test`
 Expected: 9 passed (5 client + 4 picker)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
