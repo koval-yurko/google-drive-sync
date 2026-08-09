@@ -2403,7 +2403,7 @@ git commit -m "feat: background job runner with live event broker"
   - `PUT /api/settings/{key}` with body `{"id": str, "name": str}` → the stored `FolderRef`. Rejects any key outside `photos_root` and `zip_source` with 400.
   - `GET /api/drive/folders?parent=<id>` → `{"parent": {"id","name"}, "folders": [DriveFile...]}`. `parent` defaults to `"root"`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_api_settings.py`:
 
@@ -2514,12 +2514,12 @@ def test_unknown_parent_returns_404(client):
     assert client.get("/api/drive/folders", params={"parent": "ghost"}).status_code == 404
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_api_settings.py tests/test_api_drive.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'photolib.api'`
 
-- [ ] **Step 3: Write the application factory**
+- [x] **Step 3: Write the application factory**
 
 Create `photolib/api/__init__.py` as an empty file, then `photolib/api/app.py`:
 
@@ -2594,7 +2594,7 @@ def create_app(config: Config | None = None, drive=None) -> FastAPI:
     return app
 ```
 
-- [ ] **Step 4: Write the settings routes**
+- [x] **Step 4: Write the settings routes**
 
 Create `photolib/api/routes_settings.py`:
 
@@ -2629,7 +2629,7 @@ def write_setting(key: str, folder: FolderRef, request: Request) -> FolderRef:
     return folder
 ```
 
-- [ ] **Step 5: Write the Drive browsing routes**
+- [x] **Step 5: Write the Drive browsing routes**
 
 Create `photolib/api/routes_drive.py`:
 
@@ -2668,12 +2668,12 @@ def list_folders(request: Request, parent: str = "root") -> dict:
     }
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/test_api_settings.py tests/test_api_drive.py -v`
 Expected: 10 passed
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add photolib/api tests/test_api_settings.py tests/test_api_drive.py
