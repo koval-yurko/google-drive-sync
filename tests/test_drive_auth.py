@@ -1,4 +1,6 @@
 import json
+import os
+import time
 
 import pytest
 
@@ -57,5 +59,71 @@ def test_access_token_refreshes_when_expired(tmp_path, monkeypatch):
 
 def test_access_token_raises_when_missing(tmp_path):
     provider = TokenProvider(tmp_path / "creds.json", tmp_path / "token.json")
+    with pytest.raises(MissingCredentialsError):
+        provider.access_token()
+
+
+def test_cache_reused_on_unchanged_file(tmp_path, monkeypatch):
+    """Cache is reused: two access_token() calls on unchanged file read it once."""
+    token = write_token(tmp_path, VALID_TOKEN)
+    provider = TokenProvider(tmp_path / "creds.json", token)
+
+    load_count = 0
+    original_from_file = None
+
+    def counting_from_file(path, scopes):
+        nonlocal load_count, original_from_file
+        load_count += 1
+        # Call the original method
+        return original_from_file(path, scopes)
+
+    # Patch with a wrapper around the original
+    from google.oauth2 import credentials as creds_module
+    original_from_file = creds_module.Credentials.from_authorized_user_file
+    monkeypatch.setattr(
+        creds_module.Credentials,
+        "from_authorized_user_file",
+        classmethod(lambda cls, path, scopes: counting_from_file(path, scopes)),
+    )
+
+    first_token = provider.access_token()
+    assert first_token == "cached-access-token"
+    assert load_count == 1
+
+    second_token = provider.access_token()
+    assert second_token == "cached-access-token"
+    assert load_count == 1  # File not re-read
+
+
+def test_cache_reloaded_on_file_change(tmp_path, monkeypatch):
+    """Cache is invalidated: external token file change causes reload."""
+    token = write_token(tmp_path, VALID_TOKEN)
+    provider = TokenProvider(tmp_path / "creds.json", token)
+
+    first_token = provider.access_token()
+    assert first_token == "cached-access-token"
+
+    # Externally modify token file with a new token
+    new_payload = {**VALID_TOKEN, "token": "new-external-token"}
+    token.write_text(json.dumps(new_payload))
+    # Set a clearly later mtime so it's detected
+    later_time = time.time() + 10
+    os.utime(str(token), (later_time, later_time))
+
+    second_token = provider.access_token()
+    assert second_token == "new-external-token"
+
+
+def test_access_token_raises_when_file_deleted(tmp_path):
+    """File deletion between calls raises MissingCredentialsError."""
+    token = write_token(tmp_path, VALID_TOKEN)
+    provider = TokenProvider(tmp_path / "creds.json", token)
+
+    first_token = provider.access_token()
+    assert first_token == "cached-access-token"
+
+    # Delete the token file externally
+    token.unlink()
+
     with pytest.raises(MissingCredentialsError):
         provider.access_token()

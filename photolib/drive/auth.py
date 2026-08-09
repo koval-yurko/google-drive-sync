@@ -21,6 +21,7 @@ class TokenProvider:
         self._credentials_path = credentials_path
         self._token_path = token_path
         self._creds: Credentials | None = None
+        self._token_mtime: float | None = None
 
     def is_configured(self) -> bool:
         return self._token_path.exists()
@@ -34,7 +35,22 @@ class TokenProvider:
 
     def _load(self) -> Credentials:
         if self._creds is not None:
-            return self._creds
+            # Check if the file has been modified externally
+            if not self._token_path.exists():
+                # File was deleted, invalidate cache
+                self._creds = None
+                self._token_mtime = None
+                raise MissingCredentialsError(
+                    f"{self._token_path} not found; authorise the app first"
+                )
+            current_mtime = self._token_path.stat().st_mtime
+            if current_mtime == self._token_mtime:
+                # File unchanged, return cached credentials
+                return self._creds
+            # File changed, invalidate cache and re-read
+            self._creds = None
+            self._token_mtime = None
+
         if not self._token_path.exists():
             raise MissingCredentialsError(
                 f"{self._token_path} not found; authorise the app first"
@@ -42,7 +58,10 @@ class TokenProvider:
         self._creds = Credentials.from_authorized_user_file(
             str(self._token_path), SCOPES
         )
+        self._token_mtime = self._token_path.stat().st_mtime
         return self._creds
 
     def _persist(self, creds: Credentials) -> None:
         self._token_path.write_text(creds.to_json())
+        # Refresh the recorded mtime after writing
+        self._token_mtime = self._token_path.stat().st_mtime
