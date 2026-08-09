@@ -136,7 +136,7 @@ addopts = "-m 'not live'"
 - [ ] **Step 2: Create the virtual environment and install**
 
 ```bash
-cd /Users/koval/dev/test/google-drive-sync
+cd "$(git rev-parse --show-toplevel)"
 uv venv --python 3.12
 uv pip install -e ".[dev]"
 ```
@@ -2980,6 +2980,9 @@ git commit -m "feat: action and job routes with sse progress streaming"
 - Create: `web/src/main.tsx` (replace generated)
 - Create: `web/src/styles.css`
 - Create: `web/src/api/client.test.ts`
+- Create: `web/src/pages/SettingsPage.tsx` (stub, replaced in Task 14)
+- Create: `web/src/pages/ActionPage.tsx` (stub, replaced in Task 15)
+- Create: `web/src/pages/JobsPage.tsx` (stub, replaced in Task 15)
 
 **Interfaces:**
 - Consumes: the `/api` surface from Tasks 11 and 12.
@@ -2990,7 +2993,7 @@ git commit -m "feat: action and job routes with sse progress streaming"
 - [ ] **Step 1: Scaffold the project**
 
 ```bash
-cd /Users/koval/dev/test/google-drive-sync
+cd "$(git rev-parse --show-toplevel)"
 npm create vite@latest web -- --template react-ts
 cd web
 npm install
@@ -3357,22 +3360,51 @@ progress { width: 100%; }
 - [ ] **Step 9: Delete the generated files Vite created that are now unused**
 
 ```bash
-cd /Users/koval/dev/test/google-drive-sync/web
+cd "$(git rev-parse --show-toplevel)/web"
 rm -f src/App.css src/index.css src/assets/react.svg
 ```
 
-- [ ] **Step 10: Run the tests to verify they pass**
+- [ ] **Step 10: Create placeholder pages so the build stays green**
 
-Run: `cd web && npm test`
-Expected: 5 passed
+`App.tsx` routes to three pages that Tasks 14 and 15 implement. Create minimal
+stubs now so this task ends with a compiling build; the later tasks replace
+these files wholesale.
 
-Note: `App.tsx` imports pages that do not exist yet, so `npm run build` will fail
-until Task 15. The Vitest run only touches `client.ts` and passes.
+Create `web/src/pages/SettingsPage.tsx`:
 
-- [ ] **Step 11: Commit**
+```tsx
+export function SettingsPage() {
+  return <p>Settings — implemented in Task 14.</p>
+}
+```
+
+Create `web/src/pages/ActionPage.tsx`:
+
+```tsx
+import type { ActionSpec } from '../api/types'
+
+export function ActionPage({ actions }: { actions: ActionSpec[] }) {
+  return <p>Actions ({actions.length}) — implemented in Task 15.</p>
+}
+```
+
+Create `web/src/pages/JobsPage.tsx`:
+
+```tsx
+export function JobsPage() {
+  return <p>Jobs — implemented in Task 15.</p>
+}
+```
+
+- [ ] **Step 11: Run the tests and the build to verify they pass**
+
+Run: `cd web && npm test && npm run build`
+Expected: 5 tests passed, and the build succeeds with no TypeScript errors.
+
+- [ ] **Step 12: Commit**
 
 ```bash
-cd /Users/koval/dev/test/google-drive-sync
+cd "$(git rev-parse --show-toplevel)"
 git add web
 git commit -m "feat: react scaffold, typed api client, application shell"
 ```
@@ -3383,7 +3415,7 @@ git commit -m "feat: react scaffold, typed api client, application shell"
 
 **Files:**
 - Create: `web/src/components/FolderPicker.tsx`
-- Create: `web/src/pages/SettingsPage.tsx`
+- Replace: `web/src/pages/SettingsPage.tsx` (overwrite the Task 13 stub)
 - Create: `web/src/components/FolderPicker.test.tsx`
 
 **Interfaces:**
@@ -3450,7 +3482,7 @@ describe('FolderPicker', () => {
 - [ ] **Step 2: Install the interaction testing library**
 
 ```bash
-cd /Users/koval/dev/test/google-drive-sync/web
+cd "$(git rev-parse --show-toplevel)/web"
 npm install -D @testing-library/user-event
 ```
 
@@ -3639,7 +3671,7 @@ Expected: 9 passed (5 client + 4 picker)
 - [ ] **Step 7: Commit**
 
 ```bash
-cd /Users/koval/dev/test/google-drive-sync
+cd "$(git rev-parse --show-toplevel)"
 git add web/src
 git commit -m "feat: drive folder picker and settings page"
 ```
@@ -3650,8 +3682,8 @@ git commit -m "feat: drive folder picker and settings page"
 
 **Files:**
 - Create: `web/src/components/JobProgress.tsx`
-- Create: `web/src/pages/ActionPage.tsx`
-- Create: `web/src/pages/JobsPage.tsx`
+- Replace: `web/src/pages/ActionPage.tsx` (overwrite the Task 13 stub)
+- Replace: `web/src/pages/JobsPage.tsx` (overwrite the Task 13 stub)
 - Create: `web/src/pages/ActionPage.test.tsx`
 
 **Interfaces:**
@@ -3909,7 +3941,7 @@ Expected: build succeeds with no TypeScript errors
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /Users/koval/dev/test/google-drive-sync
+cd "$(git rev-parse --show-toplevel)"
 git add web/src
 git commit -m "feat: action pages with live progress and job history"
 ```
