@@ -3694,7 +3694,7 @@ Phase 1 actions take no parameters, so the page renders a Run button rather than
 generated form; the parameter schema is displayed so later actions have an obvious
 place to grow into.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `web/src/pages/ActionPage.test.tsx`:
 
@@ -3756,12 +3756,12 @@ describe('ActionPage', () => {
 })
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cd web && npm test`
 Expected: FAIL — cannot resolve `./ActionPage`
 
-- [ ] **Step 3: Write the progress component**
+- [x] **Step 3: Write the progress component**
 
 Create `web/src/components/JobProgress.tsx`:
 
@@ -3819,7 +3819,7 @@ export function JobProgress({ jobId }: { jobId: string }) {
 }
 ```
 
-- [ ] **Step 4: Write the action page**
+- [x] **Step 4: Write the action page**
 
 Create `web/src/pages/ActionPage.tsx`:
 
@@ -3871,7 +3871,7 @@ export function ActionPage({ actions }: { actions: ActionSpec[] }) {
 }
 ```
 
-- [ ] **Step 5: Write the jobs page**
+- [x] **Step 5: Write the jobs page**
 
 Create `web/src/pages/JobsPage.tsx`:
 
@@ -3928,17 +3928,17 @@ export function JobsPage() {
 }
 ```
 
-- [ ] **Step 6: Run the frontend tests**
+- [x] **Step 6: Run the frontend tests**
 
 Run: `cd web && npm test`
 Expected: 12 passed
 
-- [ ] **Step 7: Verify the production build compiles**
+- [x] **Step 7: Verify the production build compiles**
 
 Run: `cd web && npm run build`
 Expected: build succeeds with no TypeScript errors
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
