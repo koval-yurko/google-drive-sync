@@ -1,0 +1,8 @@
+.idea/
+.venv/
+__pycache__/
+*.pyc
+
+# secrets — never commit these
+credentials.json
+token.json
