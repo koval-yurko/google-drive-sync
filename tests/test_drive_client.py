@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 from photolib.drive.client import DriveClient
-from photolib.drive.errors import NotFoundError, RateLimitedError, retry
+from photolib.drive.errors import DriveError, MAX_ATTEMPTS, NotFoundError, RateLimitedError, retry
 
 
 class StubTokens:
@@ -98,12 +98,31 @@ def test_missing_file_raises_not_found():
         client_with(handler).get_file("nope")
 
 
-def test_rate_limit_raises_rate_limited():
+def test_rate_limit_raises_rate_limited(monkeypatch):
+    monkeypatch.setattr("photolib.drive.errors.time.sleep", lambda _: None)
+
     def handler(request):
         return httpx.Response(429, json={"error": {"message": "slow down"}})
 
     with pytest.raises(RateLimitedError):
         client_with(handler).get_file("f1")
+
+
+def test_403_with_rate_in_message_raises_rate_limited():
+    from photolib.drive.errors import raise_for_response
+
+    response = httpx.Response(403, json={"error": {"message": "Rate Limit Exceeded"}})
+    with pytest.raises(RateLimitedError):
+        raise_for_response(response)
+
+
+def test_403_without_rate_raises_drive_error():
+    from photolib.drive.errors import raise_for_response
+
+    response = httpx.Response(403, json={"error": {"message": "The user does not have sufficient permissions for this file"}})
+    with pytest.raises(DriveError) as exc_info:
+        raise_for_response(response)
+    assert not isinstance(exc_info.value, RateLimitedError)
 
 
 def test_retry_recovers_after_transient_failures(monkeypatch):
@@ -123,13 +142,16 @@ def test_retry_recovers_after_transient_failures(monkeypatch):
 
 def test_retry_gives_up_and_reraises(monkeypatch):
     monkeypatch.setattr("photolib.drive.errors.time.sleep", lambda _: None)
+    attempts = {"n": 0}
 
     @retry
     def always_busy():
+        attempts["n"] += 1
         raise RateLimitedError("busy")
 
     with pytest.raises(RateLimitedError):
         always_busy()
+    assert attempts["n"] == MAX_ATTEMPTS
 
 
 def test_retry_does_not_retry_not_found(monkeypatch):
