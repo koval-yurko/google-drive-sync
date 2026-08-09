@@ -245,7 +245,7 @@ def run(ctx: ActionContext, params: Params):
 
 
 def test_duplicate_id_raises_error(cleanup_temp_modules):
-    """Two modules with the same ID raise an error during discovery."""
+    """Two modules with the same ID raise an error naming both modules."""
     # Create a module with the same ID as check_connection
     code = '''"""Test action with duplicate ID."""
 from typing import Iterator
@@ -265,5 +265,11 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     _write_temp_action("test_duplicate_id_action_1", code)
 
     # Discovery should raise ValueError due to duplicate ID
-    with pytest.raises(ValueError, match="Duplicate ID"):
+    # Error message must name both the original and colliding module names
+    with pytest.raises(ValueError) as exc_info:
         all_actions()
+
+    error_message = str(exc_info.value)
+    assert "Duplicate" in error_message
+    assert "check_connection" in error_message
+    assert "test_duplicate_id_action_1" in error_message

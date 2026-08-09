@@ -35,6 +35,7 @@ def _discover() -> dict[str, ActionSpec]:
     global _discovery_errors
     _discovery_errors = {}
     specs: dict[str, ActionSpec] = {}
+    id_to_module: dict[str, str] = {}  # Track which module claimed each ID
     for info in pkgutil.iter_modules(photolib.actions.__path__):
         if info.name in {"base", "registry"}:
             continue
@@ -58,10 +59,11 @@ def _discover() -> dict[str, ActionSpec]:
             )
             continue
 
-        # Detect duplicate IDs
+        # Detect duplicate IDs (raise outside try/except so it's loud)
         if module.ID in specs:
             error_msg = (
-                f"Duplicate ID '{module.ID}': already defined in a previous module"
+                f"Duplicate action ID '{module.ID}': declared by both "
+                f"'{id_to_module[module.ID]}' and '{info.name}'"
             )
             raise ValueError(error_msg)
 
@@ -73,6 +75,7 @@ def _discover() -> dict[str, ActionSpec]:
             params_model=module.Params,
             run=module.run,
         )
+        id_to_module[module.ID] = info.name
     return specs
 
 
