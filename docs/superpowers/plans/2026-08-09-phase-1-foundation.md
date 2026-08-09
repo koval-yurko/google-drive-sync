@@ -2702,7 +2702,7 @@ git commit -m "feat: fastapi app with settings and drive browsing routes"
   - `GET /api/jobs/{id}/stream` → `text/event-stream` of the broker's payloads.
   - `photolib.main:app` — the module-level ASGI app for uvicorn.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_api_actions.py`:
 
@@ -2810,12 +2810,12 @@ def test_stream_endpoint_serves_event_stream(client):
         assert response.headers["content-type"].startswith("text/event-stream")
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `uv run pytest tests/test_api_actions.py tests/test_api_jobs.py -v`
 Expected: FAIL — `routes_actions` does not exist, so app creation errors on import
 
-- [ ] **Step 3: Write the action routes**
+- [x] **Step 3: Write the action routes**
 
 Create `photolib/api/routes_actions.py`:
 
@@ -2862,7 +2862,7 @@ def run_action(action_id: str, params: dict, request: Request) -> dict:
     return job.model_dump()
 ```
 
-- [ ] **Step 4: Write the job routes**
+- [x] **Step 4: Write the job routes**
 
 Create `photolib/api/routes_jobs.py`:
 
@@ -2937,7 +2937,7 @@ def _to_json(payload: dict) -> str:
     return json.dumps(payload)
 ```
 
-- [ ] **Step 5: Write the uvicorn entry point**
+- [x] **Step 5: Write the uvicorn entry point**
 
 Create `photolib/main.py`:
 
@@ -2949,17 +2949,17 @@ from photolib.api.app import create_app
 app = create_app()
 ```
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/test_api_actions.py tests/test_api_jobs.py -v`
 Expected: 9 passed
 
-- [ ] **Step 7: Run the whole suite**
+- [x] **Step 7: Run the whole suite**
 
 Run: `uv run pytest -v`
 Expected: all tests pass
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add photolib/api/routes_actions.py photolib/api/routes_jobs.py photolib/main.py tests/test_api_actions.py tests/test_api_jobs.py
