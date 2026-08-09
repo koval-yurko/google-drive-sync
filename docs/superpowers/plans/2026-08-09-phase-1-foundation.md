@@ -3961,7 +3961,7 @@ the app.
 - Consumes: everything.
 - Produces: an opt-in live test suite (`uv run pytest -m live`) and developer documentation.
 
-- [ ] **Step 1: Write the opt-in live test**
+- [x] **Step 1: Write the opt-in live test**
 
 Create `tests/test_live_drive.py`:
 
@@ -4035,12 +4035,12 @@ def test_extracts_one_sidecar_and_verifies_its_crc(client):
     assert "title" in payload
 ```
 
-- [ ] **Step 2: Run the live tests**
+- [x] **Step 2: Run the live tests**
 
 Run: `uv run pytest -m live -v`
 Expected: 4 passed. Each reads only a few kilobytes; no archive is downloaded whole.
 
-- [ ] **Step 3: Write the README**
+- [x] **Step 3: Write the README**
 
 Create `README.md`:
 
@@ -4131,7 +4131,7 @@ the browser:
    the Global Photos folder and **17 archive(s)** in the ZIP source folder.
 9. The Jobs page lists the run; Details replays its log.
 
-- [ ] **Step 5: Run the full suite one final time**
+- [x] **Step 5: Run the full suite one final time**
 
 ```bash
 uv run pytest -v
@@ -4140,7 +4140,7 @@ cd web && npm test && npm run build
 
 Expected: all backend tests pass, all frontend tests pass, the build succeeds.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add README.md tests/test_live_drive.py
