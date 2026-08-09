@@ -6,3 +6,11 @@ __pycache__/
 # secrets — never commit these
 credentials.json
 token.json
+
+# git worktrees
+.worktrees/
+
+node_modules/
+web/dist/
+*.db
+.cache/
