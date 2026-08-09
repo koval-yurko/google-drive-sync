@@ -34,6 +34,10 @@ class JobRunner:
             return
         self._queue.put(None)
         self._thread.join(timeout=5.0)
+        if self._thread.is_alive():
+            raise RuntimeError(
+                "job runner worker thread did not stop within 5.0s timeout"
+            )
         self._thread = None
 
     def submit(self, action_id: str, params: dict) -> Job:

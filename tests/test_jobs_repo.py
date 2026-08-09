@@ -2,6 +2,7 @@ import threading
 import time
 
 from photolib.db.jobs_repo import JobsRepo, _now
+from photolib.db.settings_repo import SettingsRepo
 
 
 def test_create_returns_queued_job(conn):
@@ -118,3 +119,84 @@ def test_concurrent_mutations_are_safe(conn):
     assert not errors, f"Concurrency errors: {errors}"
     events = repo.events(job.id)
     assert len(events) == 100, f"Expected 100 events, got {len(events)}"
+
+
+def test_concurrent_reads_and_writes_are_safe(conn):
+    """A read racing a write on the same connection must never corrupt data.
+
+    test_concurrent_mutations_are_safe above races two already-locked
+    writers against each other, which never touches the unlocked-read path.
+    This test races get()/list()/events() (reads) against add_event()/
+    update_progress() (writes) directly, which is the exact shape that
+    produced sqlite3.InterfaceError: bad parameter or other API misuse
+    before reads were guarded by the shared connection lock.
+    """
+    repo = JobsRepo(conn)
+    job = repo.create("concurrent_test", {})
+    errors = []
+
+    def writer():
+        try:
+            for i in range(300):
+                repo.add_event(job.id, "info", f"event_{i}")
+                repo.update_progress(job.id, i / 300, f"progress_{i}")
+        except Exception as e:
+            errors.append(f"writer error: {e}")
+
+    def reader():
+        try:
+            for _ in range(300):
+                repo.get(job.id)
+                repo.list()
+                repo.events(job.id)
+        except Exception as e:
+            errors.append(f"reader error: {e}")
+
+    t1 = threading.Thread(target=writer)
+    t2 = threading.Thread(target=reader)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert not errors, f"Concurrency errors: {errors}"
+
+
+def test_concurrent_cross_repo_access_is_safe(conn):
+    """Two different repo classes over the SAME connection must not race.
+
+    JobsRepo and SettingsRepo are constructed over one shared
+    sqlite3.Connection; each repo class must use the connection's shared
+    lock (catalog.LockedConnection.lock), not a private per-instance lock,
+    or a read in one repo class can run concurrently with a write in the
+    other on the same connection. This is the live path: check_connection's
+    run() calls ctx.settings.get_folder(...) from the worker thread while
+    the main thread's submit() -> JobsRepo.create() runs concurrently.
+    """
+    jobs_repo = JobsRepo(conn)
+    settings_repo = SettingsRepo(conn)
+    job = jobs_repo.create("concurrent_test", {})
+    errors = []
+
+    def jobs_writer():
+        try:
+            for i in range(300):
+                jobs_repo.add_event(job.id, "info", f"event_{i}")
+        except Exception as e:
+            errors.append(f"jobs_writer error: {e}")
+
+    def settings_reader():
+        try:
+            for _ in range(300):
+                settings_repo.get("photos_root")
+        except Exception as e:
+            errors.append(f"settings_reader error: {e}")
+
+    t1 = threading.Thread(target=jobs_writer)
+    t2 = threading.Thread(target=settings_reader)
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    assert not errors, f"Concurrency errors: {errors}"

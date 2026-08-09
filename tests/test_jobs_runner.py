@@ -88,3 +88,32 @@ def test_wait_idle_waits_for_every_rapidly_submitted_job(runner, conn):
     repo = JobsRepo(conn)
     for job in jobs:
         assert repo.get(job.id).status == "done"
+
+
+def test_stop_then_start_again_works(conn):
+    """A fresh start() after a clean stop() must spawn a live worker again.
+
+    Guards against stop() resetting self._thread to None while the old
+    thread is still alive (or leaving it set after it already died): either
+    bug would make this start()/submit() silently do nothing, and
+    wait_idle() would time out.
+    """
+    repo = JobsRepo(conn)
+    broker = EventBroker()
+
+    def context_factory() -> ActionContext:
+        return ActionContext(
+            conn=conn, drive=FakeDrive(), settings=SettingsRepo(conn),
+            config=Config.load(),
+        )
+
+    r = JobRunner(context_factory=context_factory, repo=repo, broker=broker)
+    r.start()
+    r.stop()
+    r.start()
+    try:
+        job = r.submit("check_connection", {})
+        r.wait_idle()
+        assert repo.get(job.id).status == "done"
+    finally:
+        r.stop()
