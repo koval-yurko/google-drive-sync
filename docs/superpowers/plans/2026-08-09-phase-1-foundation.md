@@ -2990,7 +2990,7 @@ git commit -m "feat: action and job routes with sse progress streaming"
   - `web/src/api/types.ts`: `FolderRef`, `Settings`, `DriveFolder`, `ActionSpec`, `Job`, `JobEvent`.
   - `web/src/api/client.ts`: `getSettings()`, `putSetting(key, folder)`, `listFolders(parent?)`, `listActions()`, `runAction(id, params)`, `listJobs()`, `getJob(id)`, `getJobEvents(id, after?)`, `streamJob(id, onMessage, onEnd) => () => void`.
 
-- [ ] **Step 1: Scaffold the project**
+- [x] **Step 1: Scaffold the project**
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
@@ -3001,7 +3001,7 @@ npm install react-router-dom
 npm install -D vitest jsdom @testing-library/react @testing-library/jest-dom
 ```
 
-- [ ] **Step 2: Replace `web/vite.config.ts`**
+- [x] **Step 2: Replace `web/vite.config.ts`**
 
 Import `defineConfig` from `vitest/config`, not `vite` — the `vite` version has no
 `test` property and `npm run build` type-checks this file.
@@ -3025,7 +3025,7 @@ export default defineConfig({
 })
 ```
 
-- [ ] **Step 3: Add the test script to `web/package.json`**
+- [x] **Step 3: Add the test script to `web/package.json`**
 
 Add to the `"scripts"` object, keeping the generated entries:
 
@@ -3033,7 +3033,7 @@ Add to the `"scripts"` object, keeping the generated entries:
 "test": "vitest run"
 ```
 
-- [ ] **Step 4: Write the failing test**
+- [x] **Step 4: Write the failing test**
 
 Create `web/src/api/client.test.ts`:
 
@@ -3090,12 +3090,12 @@ describe('api client', () => {
 })
 ```
 
-- [ ] **Step 5: Run the test to verify it fails**
+- [x] **Step 5: Run the test to verify it fails**
 
 Run: `cd web && npm test`
 Expected: FAIL — cannot resolve `./client`
 
-- [ ] **Step 6: Write the types**
+- [x] **Step 6: Write the types**
 
 Create `web/src/api/types.ts`:
 
@@ -3147,7 +3147,7 @@ export interface JobEvent {
 }
 ```
 
-- [ ] **Step 7: Write the client**
+- [x] **Step 7: Write the client**
 
 Create `web/src/api/client.ts`:
 
@@ -3213,7 +3213,7 @@ export function streamJob(
 }
 ```
 
-- [ ] **Step 8: Write the shell and navigation**
+- [x] **Step 8: Write the shell and navigation**
 
 Create `web/src/components/Nav.tsx`:
 
@@ -3357,14 +3357,14 @@ progress { width: 100%; }
 .modal { background: Canvas; padding: 1.25rem; border-radius: 10px; width: 32rem; }
 ```
 
-- [ ] **Step 9: Delete the generated files Vite created that are now unused**
+- [x] **Step 9: Delete the generated files Vite created that are now unused**
 
 ```bash
 cd "$(git rev-parse --show-toplevel)/web"
 rm -f src/App.css src/index.css src/assets/react.svg
 ```
 
-- [ ] **Step 10: Create placeholder pages so the build stays green**
+- [x] **Step 10: Create placeholder pages so the build stays green**
 
 `App.tsx` routes to three pages that Tasks 14 and 15 implement. Create minimal
 stubs now so this task ends with a compiling build; the later tasks replace
@@ -3396,12 +3396,12 @@ export function JobsPage() {
 }
 ```
 
-- [ ] **Step 11: Run the tests and the build to verify they pass**
+- [x] **Step 11: Run the tests and the build to verify they pass**
 
 Run: `cd web && npm test && npm run build`
 Expected: 5 tests passed, and the build succeeds with no TypeScript errors.
 
-- [ ] **Step 12: Commit**
+- [x] **Step 12: Commit**
 
 ```bash
 cd "$(git rev-parse --show-toplevel)"
