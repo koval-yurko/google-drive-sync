@@ -5,13 +5,14 @@ from __future__ import annotations
 import hashlib
 
 from photolib.drive.client import FOLDER_MIME, DriveFile
-from photolib.drive.errors import NotFoundError
+from photolib.drive.errors import DriveError, NotFoundError
 
 
 class FakeDrive:
     def __init__(self) -> None:
         self._files: dict[str, DriveFile] = {}
         self._content: dict[str, bytes] = {}
+        self.range_calls: list[tuple[str, int, int]] = []
 
     def add_folder(self, id: str, name: str, parent: str | None = None) -> DriveFile:
         folder = DriveFile(
@@ -53,8 +54,13 @@ class FakeDrive:
         return sorted(children, key=lambda f: (not f.is_folder, f.name))
 
     def read_range(self, file_id: str, start: int, end: int) -> bytes:
+        self.range_calls.append((file_id, start, end))
+        # Distinguish between unknown file (404) and known folder (cannot download)
+        if file_id not in self._files:
+            raise NotFoundError(f"no such file: {file_id}")
         if file_id not in self._content:
-            raise NotFoundError(f"no content for: {file_id}")
+            # File exists but has no content (it's a folder) — Drive would return fileNotDownloadable
+            raise DriveError(f"file not downloadable: {file_id}")
         return self._content[file_id][start : end + 1]
 
     def close(self) -> None:
