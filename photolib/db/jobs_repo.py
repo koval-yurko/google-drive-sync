@@ -46,7 +46,10 @@ def _to_job(row: sqlite3.Row) -> Job:
 class JobsRepo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        self._lock = threading.Lock()
+        # Reentrant: create() calls self.get() while already holding the lock,
+        # and get()/list()/events() must also hold it (see below) so that reads
+        # never execute concurrently with a write on the shared connection.
+        self._lock = threading.RLock()
 
     def create(self, action: str, params: dict) -> Job:
         with self._lock:
@@ -62,17 +65,19 @@ class JobsRepo:
             return job
 
     def get(self, job_id: str) -> Job | None:
-        row = self._conn.execute(
-            "SELECT * FROM jobs WHERE id = ?", (job_id,)
-        ).fetchone()
-        return _to_job(row) if row else None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            return _to_job(row) if row else None
 
     def list(self, limit: int = 50) -> list[Job]:
-        rows = self._conn.execute(
-            "SELECT * FROM jobs ORDER BY created_at DESC, rowid DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-        return [_to_job(r) for r in rows]
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM jobs ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [_to_job(r) for r in rows]
 
     def mark_running(self, job_id: str) -> None:
         with self._lock:
@@ -120,8 +125,9 @@ class JobsRepo:
             self._conn.commit()
 
     def events(self, job_id: str, after_id: int = 0) -> list[JobEvent]:
-        rows = self._conn.execute(
-            "SELECT * FROM job_events WHERE job_id = ? AND id > ? ORDER BY id",
-            (job_id, after_id),
-        ).fetchall()
-        return [JobEvent.model_validate(dict(r)) for r in rows]
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM job_events WHERE job_id = ? AND id > ? ORDER BY id",
+                (job_id, after_id),
+            ).fetchall()
+            return [JobEvent.model_validate(dict(r)) for r in rows]

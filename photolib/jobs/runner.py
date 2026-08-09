@@ -20,6 +20,8 @@ class JobRunner:
         self._thread: threading.Thread | None = None
         self._idle = threading.Event()
         self._idle.set()
+        self._outstanding = 0
+        self._outstanding_lock = threading.Lock()
 
     def start(self) -> None:
         if self._thread is not None:
@@ -37,7 +39,9 @@ class JobRunner:
     def submit(self, action_id: str, params: dict) -> Job:
         registry.get_action(action_id)  # fail fast on unknown ids
         job = self._repo.create(action_id, params)
-        self._idle.clear()
+        with self._outstanding_lock:
+            self._outstanding += 1
+            self._idle.clear()
         self._queue.put(job.id)
         return job
 
@@ -53,8 +57,10 @@ class JobRunner:
             try:
                 self._execute(job_id)
             finally:
-                if self._queue.empty():
-                    self._idle.set()
+                with self._outstanding_lock:
+                    self._outstanding -= 1
+                    if self._outstanding == 0:
+                        self._idle.set()
 
     def _execute(self, job_id: str) -> None:
         job = self._repo.get(job_id)

@@ -80,3 +80,11 @@ def test_jobs_run_one_at_a_time(runner, conn):
     repo = JobsRepo(conn)
     assert repo.get(first.id).status == "done"
     assert repo.get(second.id).status == "done"
+
+
+def test_wait_idle_waits_for_every_rapidly_submitted_job(runner, conn):
+    jobs = [runner.submit("check_connection", {}) for _ in range(5)]
+    runner.wait_idle()
+    repo = JobsRepo(conn)
+    for job in jobs:
+        assert repo.get(job.id).status == "done"
