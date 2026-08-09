@@ -9,3 +9,8 @@ token.json
 
 # git worktrees
 .worktrees/
+
+node_modules/
+web/dist/
+*.db
+.cache/
