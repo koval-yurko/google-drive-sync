@@ -1,0 +1,77 @@
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ReviewPage } from './ReviewPage'
+
+const listReviewMedia = vi.fn(async (_opts?: object) => ({
+  total: 2,
+  rows: [
+    {
+      name: 'IMG_1.HEIC', path: 'd/IMG_1.HEIC', archive_name: 'a.zip',
+      target_folder: '2023-11', target_name: 'IMG_1.HEIC',
+      capture_time: 1700000000, capture_source: 'photo_taken_time',
+      place: 'Warsaw', country: 'Poland',
+      duplicate_of: null, duplicate_reason: null,
+      upload_status: 'pending', size: 100,
+    },
+    {
+      name: 'IMG_2.MOV', path: 'd/IMG_2.MOV', archive_name: 'a.zip',
+      target_folder: '2019-01', target_name: 'IMG_2.MOV',
+      capture_time: null, capture_source: 'year_folder',
+      place: null, country: null,
+      duplicate_of: 'back_2024_01', duplicate_reason: 'name match',
+      upload_status: 'pending', size: 200,
+    },
+  ],
+}))
+
+vi.mock('../api/client', () => ({
+  getReviewSummary: vi.fn(async () => ({
+    media: 2, planned: 2, unplanned: 0, duplicates: 1,
+    with_place: 1, with_sidecar: 1, pending: 2,
+    archives: 1, entries: 3, drive_files: 5,
+  })),
+  listReviewMedia: (opts?: object) => listReviewMedia(opts),
+}))
+
+afterEach(() => vi.clearAllMocks())
+
+describe('ReviewPage', () => {
+  it('shows the summary totals', async () => {
+    render(<ReviewPage />)
+    // Several tiles legitimately show the same number — media and planned are
+    // both 2 once everything is planned — so assert on the tile as a unit
+    // rather than on a bare value that matches more than one element.
+    const label = await screen.findByText(/media files/i)
+    expect(label.closest('.card')?.textContent).toContain('2')
+  })
+
+  it('lists every planned file with its destination', async () => {
+    render(<ReviewPage />)
+    expect(await screen.findByText('IMG_1.HEIC')).toBeTruthy()
+    expect(screen.getByText('2023-11')).toBeTruthy()
+    expect(screen.getByText('2019-01')).toBeTruthy()
+  })
+
+  it('flags a file that already exists in the destination', async () => {
+    render(<ReviewPage />)
+    await screen.findByText('IMG_2.MOV')
+    expect(screen.getByText(/back_2024_01/)).toBeTruthy()
+  })
+
+  it('says plainly that duplicates still upload', async () => {
+    render(<ReviewPage />)
+    expect(await screen.findByText(/still be uploaded/i)).toBeTruthy()
+  })
+
+  it('requests only duplicates when the toggle is used', async () => {
+    render(<ReviewPage />)
+    await screen.findByText('IMG_1.HEIC')
+    await userEvent.click(screen.getByLabelText(/only files already in the destination/i))
+    await waitFor(() =>
+      expect(listReviewMedia).toHaveBeenLastCalledWith(
+        expect.objectContaining({ duplicatesOnly: true }),
+      ),
+    )
+  })
+})

@@ -59,10 +59,17 @@ def create_app(config: Config | None = None, drive=None) -> FastAPI:
     app.state.broker = broker
     app.state.runner = runner
 
-    from photolib.api import routes_actions, routes_drive, routes_jobs, routes_settings
+    from photolib.api import (
+        routes_actions,
+        routes_drive,
+        routes_jobs,
+        routes_review,
+        routes_settings,
+    )
 
     app.include_router(routes_settings.router, prefix="/api")
     app.include_router(routes_drive.router, prefix="/api")
     app.include_router(routes_actions.router, prefix="/api")
     app.include_router(routes_jobs.router, prefix="/api")
+    app.include_router(routes_review.router, prefix="/api")
     return app

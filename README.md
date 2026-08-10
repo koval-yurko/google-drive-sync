@@ -37,6 +37,27 @@ cd web && npm run dev
 
 Open http://localhost:5173. Vite proxies `/api` to the backend.
 
+## The pipeline
+
+Run these in order from the UI. The first three are safe to repeat — none of
+them writes to Drive.
+
+| Action | Does | Writes to Drive |
+| --- | --- | --- |
+| Check Connection | Verifies credentials and folders | No |
+| Scan Archives | Indexes archive contents and the destination folder | No |
+| Pair Metadata | Matches sidecars to media across archive parts | No |
+| Plan Organization | Resolves dates, places, duplicates, destinations | No |
+
+Then open **Review Plan** to see every file and where it would go.
+
+Organised photos are destined for `Photos/YYYY-MM/`. The existing `back_*`
+folders are indexed for duplicate detection and are never read from, written to,
+renamed, or moved.
+
+Files that already exist in the destination are flagged but **still uploaded** —
+deduplication is a deliberate later step, not part of this pipeline.
+
 ## Tests
 
 ```bash

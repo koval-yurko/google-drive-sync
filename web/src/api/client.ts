@@ -1,4 +1,13 @@
-import type { ActionSpec, DriveFolder, FolderRef, Job, JobEvent, Settings } from './types'
+import type {
+  ActionSpec,
+  DriveFolder,
+  FolderRef,
+  Job,
+  JobEvent,
+  ReviewMedia,
+  ReviewSummary,
+  Settings,
+} from './types'
 
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, {
@@ -56,4 +65,22 @@ export function streamJob(
     onEnd()
   }
   return () => source.close()
+}
+
+export const getReviewSummary = () => request<ReviewSummary>('/api/review/summary')
+
+export const listReviewMedia = (opts: {
+  limit?: number
+  offset?: number
+  folder?: string
+  duplicatesOnly?: boolean
+} = {}) => {
+  const params = new URLSearchParams()
+  if (opts.limit !== undefined) params.set('limit', String(opts.limit))
+  if (opts.offset !== undefined) params.set('offset', String(opts.offset))
+  if (opts.folder) params.set('folder', opts.folder)
+  if (opts.duplicatesOnly) params.set('duplicates_only', 'true')
+  return request<{ total: number; rows: ReviewMedia[] }>(
+    `/api/review/media?${params.toString()}`,
+  )
 }
