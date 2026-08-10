@@ -166,4 +166,25 @@ describe('LibraryPage', () => {
     await screen.findByRole('img', { name: 'IMG_1.HEIC' })
     expect(screen.queryByRole('button', { name: /^add tag$/i })).toBeNull()
   })
+
+  it('opens the lightbox on double-click', async () => {
+    render(<LibraryPage />)
+    await userEvent.dblClick(await screen.findByRole('img', { name: 'IMG_1.HEIC' }))
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+  })
+
+  it('does not open the lightbox on a single click', async () => {
+    render(<LibraryPage />)
+    await userEvent.click(await screen.findByRole('img', { name: 'IMG_1.HEIC' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('keeps the selection when the lightbox opens', async () => {
+    const user = userEvent.setup()
+    render(<LibraryPage />)
+    await user.click(await screen.findByRole('img', { name: 'IMG_1.HEIC' }))
+    await shiftClick(user, screen.getByRole('img', { name: 'IMG_9.HEIC' }))
+    await user.dblClick(screen.getByRole('img', { name: 'IMG_9.HEIC' }))
+    expect(screen.getByText(/3 selected/i)).toBeTruthy()
+  })
 })

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { getFacets, listLibraryFiles, listLibraryIds, listTags } from '../api/client'
 import type { Facets, LibraryFile, TagWithCount } from '../api/types'
 import { FilterSidebar } from '../components/FilterSidebar'
+import { Lightbox } from '../components/Lightbox'
 import { TagPicker } from '../components/TagPicker'
 import { Thumb } from '../components/Thumb'
 import type { LibraryFilters } from '../lib/filters'
@@ -28,6 +29,7 @@ export function LibraryPage() {
   const [facets, setFacets] = useState<Facets | null>(null)
   const [tags, setTags] = useState<TagWithCount[]>([])
   const [selection, setSelection] = useState<Selection>(NO_SELECTION)
+  const [openFile, setOpenFile] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -55,6 +57,12 @@ export function LibraryPage() {
   }, [filters])
 
   const ordered = useMemo(() => rows.map((row) => row.drive_id), [rows])
+
+  // A double-click arrives as two clicks first, which would collapse a
+  // 300-file selection down to the one tile you meant to peek at. The
+  // selection as it stood before the pair is kept here so opening can put it
+  // back.
+  const beforeClick = useRef<Selection>(NO_SELECTION)
 
   async function loadMore() {
     const result = await listLibraryFiles(filters, { limit: PAGE, offset: rows.length })
@@ -126,14 +134,22 @@ export function LibraryPage() {
                   key={file.drive_id}
                   className={isSelected(selection, file.drive_id) ? 'tile selected' : 'tile'}
                   aria-selected={isSelected(selection, file.drive_id)}
-                  onClick={(event) =>
-                    setSelection((current) =>
-                      click(current, file.drive_id, ordered, {
+                  onClick={(event) => {
+                    // detail > 1 is the second click of a double-click; the
+                    // first already did whatever selecting was wanted.
+                    if (event.detail > 1) return
+                    beforeClick.current = selection
+                    setSelection(
+                      click(selection, file.drive_id, ordered, {
                         shift: event.shiftKey,
                         meta: event.metaKey || event.ctrlKey,
                       }),
                     )
-                  }
+                  }}
+                  onDoubleClick={() => {
+                    setSelection(beforeClick.current)
+                    setOpenFile(file.drive_id)
+                  }}
                 >
                   <Thumb driveId={file.drive_id} name={file.name} />
                   <span className="tile-name">{file.name}</span>
@@ -153,7 +169,22 @@ export function LibraryPage() {
           </button>
         )}
       </section>
-      {/* Task 15 mounts the lightbox here. */}
+      {openFile && (
+        <Lightbox
+          driveId={openFile}
+          tags={tags}
+          onClose={() => setOpenFile(null)}
+          onChanged={() => {
+            listTags().then(setTags).catch((e) => setError(String(e)))
+            listLibraryFiles(filters, { limit: rows.length || PAGE, offset: 0 })
+              .then((result) => {
+                setRows(result.rows)
+                setTotal(result.total)
+              })
+              .catch((e) => setError(String(e)))
+          }}
+        />
+      )}
     </div>
   )
 }
