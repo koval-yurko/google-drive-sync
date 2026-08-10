@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
 
 _SIDECAR_FIELDS = (
     "title", "photo_taken_time", "creation_time",
@@ -18,6 +24,19 @@ _PLAN_FIELDS = (
 _MEDIA_SELECT = """
     SELECT m.*, e.path, e.name, e.size AS entry_size, e.crc32,
            a.name AS archive_name, a.drive_id AS archive_drive_id
+    FROM media m
+    JOIN entries e ON e.id = m.entry_id
+    JOIN archives a ON a.id = e.archive_id
+"""
+
+_UPLOAD_SELECT = """
+    SELECT m.id AS media_id, m.entry_id, m.target_folder, m.target_name,
+           m.capture_time, m.place, m.country, m.upload_status,
+           m.upload_session_uri, m.upload_offset, m.session_started_at,
+           m.attempts,
+           e.path, e.name, e.crc32, e.size, e.compressed_size,
+           e.method, e.local_header_offset,
+           a.drive_id AS archive_drive_id, a.name AS archive_name
     FROM media m
     JOIN entries e ON e.id = m.entry_id
     JOIN archives a ON a.id = e.archive_id
@@ -115,4 +134,74 @@ class MediaRepo:
             "with_place": one("SELECT COUNT(*) FROM media WHERE place IS NOT NULL"),
             "with_sidecar": one("SELECT COUNT(*) FROM media WHERE sidecar_id IS NOT NULL"),
             "pending": one("SELECT COUNT(*) FROM media WHERE upload_status = 'pending'"),
+            "uploaded": one("SELECT COUNT(*) FROM media WHERE upload_status = 'done'"),
+            "errors": one("SELECT COUNT(*) FROM media WHERE upload_status = 'error'"),
         }
+
+    # ---------- uploads ----------
+
+    def pending_uploads(
+        self, retry_errors: bool = False, limit: int | None = None
+    ) -> list[sqlite3.Row]:
+        """Work for the Organize action, in an order that keeps reads local."""
+        statuses = ("pending", "error") if retry_errors else ("pending",)
+        placeholders = ", ".join("?" for _ in statuses)
+        sql = (
+            f"{_UPLOAD_SELECT} WHERE m.upload_status IN ({placeholders}) "
+            "AND m.target_folder IS NOT NULL "
+            "ORDER BY a.name, e.local_header_offset"
+        )
+        args: list = list(statuses)
+        if limit is not None:
+            sql += " LIMIT ?"
+            args.append(limit)
+        return list(self._conn.execute(sql, args))
+
+    def save_session(self, entry_id: int, session_uri: str) -> None:
+        """Record a session as soon as it exists, so a crash can resume it."""
+        self._conn.execute(
+            "UPDATE media SET upload_session_uri = ?, session_started_at = ? "
+            "WHERE entry_id = ?",
+            (session_uri, _now(), entry_id),
+        )
+        self._conn.commit()
+
+    def mark_uploaded(self, entry_id: int, drive_file_id: str, md5: str) -> None:
+        self._conn.execute(
+            "UPDATE media SET upload_status = 'done', drive_file_id = ?, md5 = ?, "
+            "error = NULL, upload_session_uri = NULL, session_started_at = NULL, "
+            "upload_offset = 0 WHERE entry_id = ?",
+            (drive_file_id, md5, entry_id),
+        )
+        self._conn.commit()
+
+    def mark_failed(self, entry_id: int, reason: str, offset: int = 0) -> None:
+        """Record a failure, keeping the session so a retry can resume it."""
+        self._conn.execute(
+            "UPDATE media SET upload_status = 'error', error = ?, "
+            "upload_offset = ?, attempts = attempts + 1 WHERE entry_id = ?",
+            (reason, offset, entry_id),
+        )
+        self._conn.commit()
+
+    def reset_upload(self, entry_id: int) -> None:
+        """Forget everything about a previous attempt and queue it afresh."""
+        self._conn.execute(
+            "UPDATE media SET upload_status = 'pending', error = NULL, "
+            "upload_session_uri = NULL, session_started_at = NULL, "
+            "upload_offset = 0 WHERE entry_id = ?",
+            (entry_id,),
+        )
+        self._conn.commit()
+
+    def uploaded_by_name(self) -> dict[str, sqlite3.Row]:
+        """Verified uploads keyed by original filename.
+
+        Only rows Drive confirmed: `done`, with a file id and an MD5. This is
+        the evidence Clear Stale Trees gates on.
+        """
+        rows = self._conn.execute(
+            f"{_UPLOAD_SELECT} WHERE m.upload_status = 'done' "
+            "AND m.drive_file_id IS NOT NULL AND m.md5 IS NOT NULL"
+        )
+        return {row["name"]: row for row in rows}
