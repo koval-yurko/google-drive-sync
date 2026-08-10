@@ -14,6 +14,7 @@ from photolib.db.jobs_repo import JobsRepo
 from photolib.db.settings_repo import SettingsRepo
 from photolib.drive.auth import TokenProvider
 from photolib.drive.client import DriveClient
+from photolib.drive.writer import DriveWriter
 from photolib.jobs.broker import EventBroker
 from photolib.jobs.runner import JobRunner
 
@@ -28,9 +29,19 @@ def create_app(config: Config | None = None, drive=None) -> FastAPI:
     jobs = JobsRepo(conn)
     broker = EventBroker()
 
+    # A fake injected by tests already speaks the writer protocol; a real
+    # client needs wrapping. DriveWriter resolves the client lazily, so this
+    # is safe even when nothing ever uploads.
+    drive_writer = (
+        drive_client
+        if hasattr(drive_client, "start_session")
+        else DriveWriter(drive_client)
+    )
+
     def context_factory() -> ActionContext:
         return ActionContext(
-            conn=conn, drive=drive_client, settings=settings, config=cfg
+            conn=conn, drive=drive_client, settings=settings, config=cfg,
+            writer=drive_writer,
         )
 
     runner = JobRunner(context_factory=context_factory, repo=jobs, broker=broker)

@@ -35,6 +35,8 @@ class ActionContext:
     drive: object
     settings: SettingsRepo
     config: Config
+    writer: object | None = None
+    """Whatever may mutate Drive. None in a read-only context."""
 
 
 @dataclass

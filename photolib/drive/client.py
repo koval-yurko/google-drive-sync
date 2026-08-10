@@ -40,7 +40,12 @@ class DriveClient:
     def close(self) -> None:
         self._http.close()
 
-    def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
+    @property
+    def http(self) -> httpx.Client:
+        """The shared session. DriveWriter borrows this rather than opening its own."""
+        return self._http
+
+    def headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         headers = {"Authorization": f"Bearer {self._tokens.access_token()}"}
         if extra:
             headers.update(extra)
@@ -51,7 +56,7 @@ class DriveClient:
         response = self._http.get(
             f"{API_ROOT}/files/{file_id}",
             params={"fields": FILE_FIELDS, "supportsAllDrives": "true"},
-            headers=self._headers(),
+            headers=self.headers(),
         )
         raise_for_response(response)
         return DriveFile.model_validate(response.json())
@@ -85,7 +90,7 @@ class DriveClient:
         if page_token:
             params["pageToken"] = page_token
         response = self._http.get(
-            f"{API_ROOT}/files", params=params, headers=self._headers()
+            f"{API_ROOT}/files", params=params, headers=self.headers()
         )
         raise_for_response(response)
         return response.json()
@@ -96,7 +101,7 @@ class DriveClient:
         response = self._http.get(
             f"{API_ROOT}/files/{file_id}",
             params={"alt": "media", "supportsAllDrives": "true"},
-            headers=self._headers({"Range": f"bytes={start}-{end}"}),
+            headers=self.headers({"Range": f"bytes={start}-{end}"}),
         )
         raise_for_response(response)
         return response.content

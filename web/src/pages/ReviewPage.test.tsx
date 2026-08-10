@@ -7,31 +7,39 @@ const listReviewMedia = vi.fn(async (_opts?: object) => ({
   total: 2,
   rows: [
     {
+      entry_id: 1,
       name: 'IMG_1.HEIC', path: 'd/IMG_1.HEIC', archive_name: 'a.zip',
       target_folder: '2023-11', target_name: 'IMG_1.HEIC',
       capture_time: 1700000000, capture_source: 'photo_taken_time',
       place: 'Warsaw', country: 'Poland',
       duplicate_of: null, duplicate_reason: null,
-      upload_status: 'pending', size: 100,
+      upload_status: 'done', error: null, drive_file_id: 'f1', size: 100,
     },
     {
+      entry_id: 2,
       name: 'IMG_2.MOV', path: 'd/IMG_2.MOV', archive_name: 'a.zip',
       target_folder: '2019-01', target_name: 'IMG_2.MOV',
       capture_time: null, capture_source: 'year_folder',
       place: null, country: null,
       duplicate_of: 'back_2024_01', duplicate_reason: 'name match',
-      upload_status: 'pending', size: 200,
+      upload_status: 'error', error: 'crc: CRC mismatch',
+      drive_file_id: null, size: 200,
     },
   ],
+}))
+
+const retryUpload = vi.fn(async (_id: number) => ({
+  entry_id: 2, upload_status: 'pending',
 }))
 
 vi.mock('../api/client', () => ({
   getReviewSummary: vi.fn(async () => ({
     media: 2, planned: 2, unplanned: 0, duplicates: 1,
-    with_place: 1, with_sidecar: 1, pending: 2,
+    with_place: 1, with_sidecar: 1, pending: 0, uploaded: 1, errors: 1,
     archives: 1, entries: 3, drive_files: 5,
   })),
   listReviewMedia: (opts?: object) => listReviewMedia(opts),
+  retryUpload: (id: number) => retryUpload(id),
 }))
 
 afterEach(() => vi.clearAllMocks())
@@ -73,5 +81,25 @@ describe('ReviewPage', () => {
         expect.objectContaining({ duplicatesOnly: true }),
       ),
     )
+  })
+
+  it('shows each file its upload status', async () => {
+    render(<ReviewPage />)
+    expect(await screen.findByText('done')).toBeTruthy()
+    expect(screen.getByText(/CRC mismatch/)).toBeTruthy()
+  })
+
+  it('offers Retry only for a failed file', async () => {
+    render(<ReviewPage />)
+    await screen.findByText('IMG_2.MOV')
+    expect(screen.getAllByRole('button', { name: /retry/i })).toHaveLength(1)
+  })
+
+  it('retries the failed file and reloads', async () => {
+    render(<ReviewPage />)
+    await screen.findByText('IMG_2.MOV')
+    await userEvent.click(screen.getByRole('button', { name: /retry/i }))
+    await waitFor(() => expect(retryUpload).toHaveBeenCalledWith(2))
+    await waitFor(() => expect(listReviewMedia).toHaveBeenCalledTimes(2))
   })
 })
