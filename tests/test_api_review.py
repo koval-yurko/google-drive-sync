@@ -68,3 +68,33 @@ def test_media_filters_duplicates_only(client):
 def test_rows_never_report_skipped(client):
     body = client.get("/api/review/media").json()
     assert {r["upload_status"] for r in body["rows"]} == {"pending"}
+
+
+def test_summary_reports_uploads(client):
+    body = client.get("/api/review/summary").json()
+    assert body["uploaded"] == 0
+    assert body["errors"] == 0
+    assert body["pending"] == 2
+
+
+def test_rows_carry_the_upload_outcome(client):
+    MediaRepo(client.app.state.conn).mark_uploaded(1, "f1", "abc")
+    row = next(
+        r for r in client.get("/api/review/media").json()["rows"]
+        if r["name"] == "IMG_1.HEIC"
+    )
+    assert row["upload_status"] == "done"
+    assert row["drive_file_id"] == "f1"
+
+
+def test_retry_puts_a_failed_file_back_in_the_queue(client):
+    conn = client.app.state.conn
+    MediaRepo(conn).mark_failed(2, "CRC mismatch")
+    body = client.post("/api/review/retry/2").json()
+    assert body == {"entry_id": 2, "upload_status": "pending"}
+    row = conn.execute("SELECT * FROM media WHERE entry_id = 2").fetchone()
+    assert (row["upload_status"], row["error"]) == ("pending", None)
+
+
+def test_retrying_an_unknown_entry_is_a_404(client):
+    assert client.post("/api/review/retry/999").status_code == 404

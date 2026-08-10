@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from photolib.db.media_repo import MediaRepo
 from photolib.db.scan_repo import ScanRepo
@@ -13,6 +13,7 @@ ROW_FIELDS = (
     "name", "path", "archive_name", "target_folder", "target_name",
     "capture_time", "capture_source", "place", "country",
     "duplicate_of", "duplicate_reason", "upload_status",
+    "error", "drive_file_id",
 )
 
 
@@ -63,3 +64,16 @@ def media(
             for row in rows
         ],
     }
+
+
+@router.post("/review/retry/{entry_id}")
+def retry(request: Request, entry_id: int) -> dict:
+    """Queue a failed file for another attempt, forgetting the last one."""
+    conn = request.app.state.conn
+    row = conn.execute(
+        "SELECT id FROM media WHERE entry_id = ?", (entry_id,)
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="no such media entry")
+    MediaRepo(conn).reset_upload(entry_id)
+    return {"entry_id": entry_id, "upload_status": "pending"}
