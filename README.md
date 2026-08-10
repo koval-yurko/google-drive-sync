@@ -79,6 +79,29 @@ Closing the browser does not stop a run. Killing the process is safe: finished
 files are skipped on the next run and an interrupted upload resumes from
 whatever Drive confirms it holds.
 
+## Watching a run
+
+Every Organize run gets its own folder under `downloads/`, named for the time
+it started:
+
+```
+downloads/2026-08-10_14-32-05/IMG_1234.HEIC.part
+```
+
+A file appears there while it is being pulled out of the archive and
+disappears the moment its upload is verified, so what you see is what is
+genuinely in flight. `ls -lh downloads/*/` is a complete progress report. The
+Organize page shows the same thing, adding the upload half: a file that has
+finished downloading sits at full size on disk while its bytes go to Drive.
+
+A run only ever touches its own folder. If a run dies, its folder stays,
+named for when it started, and the next run reports it rather than deleting
+it — `rm -rf downloads/<that folder>` when you have looked. Empty leftovers
+are cleared automatically.
+
+`downloads/` is gitignored, and nothing is kept there after a successful
+upload.
+
 ## Clearing the stale trees
 
 `Clear Stale Trees` takes the Drive folder id of one extracted tree and reports
@@ -139,6 +162,8 @@ credentials live in the main checkout, so point the live suite at it:
   HTTP byte ranges, so a 2.15 GB archive is never downloaded to retrieve one photo
 - `photolib/db/` — SQLite catalog holding settings, archive indexes, and jobs
 - `photolib/thumbs.py` — disk-cached proxy for Drive's thumbnail renders
+- `photolib/downloads.py` — the per-run download folder and the live transfer
+  registry behind `GET /api/downloads`
 - `photolib/actions/` — one module per capability; each becomes a page in the UI
 - `photolib/jobs/` — a background worker that runs actions and streams progress
 - `photolib/api/` — FastAPI routes
