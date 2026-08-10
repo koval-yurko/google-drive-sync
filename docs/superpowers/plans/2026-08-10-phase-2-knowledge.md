@@ -1946,18 +1946,26 @@ def test_name_collisions_within_a_month_are_disambiguated(ctx):
     conn.execute(
         "INSERT INTO archives (drive_id, name, size) VALUES ('z9', 'extra.zip', 1)"
     )
+    # A second IMG_2.MOV in the same year folder. Neither copy has a sidecar, so
+    # both resolve to 2019-01 and genuinely collide. (A second IMG_1.HEIC would
+    # not: the original has a sidecar dating it to 2023-11 while the copy would
+    # fall back to 2023-01, so the two would never share a folder.)
     conn.execute(
         "INSERT INTO entries (archive_id, path, name, crc32, size, compressed_size,"
         " method, local_header_offset, kind) VALUES "
         "((SELECT id FROM archives WHERE drive_id='z9'),"
-        " 'Takeout/Google Photos/Photos from 2023/IMG_1.HEIC','IMG_1.HEIC',"
+        " 'Takeout/Google Photos/Photos from 2019/IMG_2.MOV','IMG_2.MOV',"
         " 999,10,5,8,0,'media')"
     )
     conn.commit()
+    # Pair Metadata is what normally creates media rows; this entry bypasses it.
+    MediaRepo(conn).upsert_media(
+        conn.execute("SELECT id FROM entries WHERE crc32 = 999").fetchone()["id"]
+    )
     list(run(ctx, Params()))
     targets = [
         r["target_name"] for r in MediaRepo(ctx.conn).all_media()
-        if r["name"] == "IMG_1.HEIC"
+        if r["name"] == "IMG_2.MOV"
     ]
     assert len(targets) == 2
     assert len(set(targets)) == 2, "colliding targets must be disambiguated"
