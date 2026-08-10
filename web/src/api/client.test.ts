@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getSettings, listFolders, runAction } from './client'
+import {
+  addFilesToTag,
+  getSettings,
+  listFolders,
+  listLibraryFiles,
+  listLibraryIds,
+  removeFilesFromTag,
+  runAction,
+  thumbUrl,
+} from './client'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -46,5 +55,71 @@ describe('api client', () => {
   it('throws on a failed response', async () => {
     stubFetch({ detail: 'boom' }, false, 500)
     await expect(getSettings()).rejects.toThrow(/boom/)
+  })
+})
+
+/** Like stubFetch, but hands back a real Response so `init` keeps its type. */
+function stubResponse(payload: unknown) {
+  const fetchMock = vi.fn(
+    async (_url: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify(payload)),
+  )
+  vi.stubGlobal('fetch', fetchMock)
+  return fetchMock
+}
+
+describe('library client', () => {
+  it('builds a filtered files URL', async () => {
+    const fetchMock = stubResponse({ total: 0, rows: [] })
+
+    await listLibraryFiles({ month: '2025-05', mediaType: 'video' }, { limit: 50 })
+
+    const url = String(fetchMock.mock.calls[0][0])
+    expect(url).toContain('/api/library/files?')
+    expect(url).toContain('month=2025-05')
+    expect(url).toContain('media_type=video')
+    expect(url).toContain('limit=50')
+  })
+
+  it('omits filters that are not set', async () => {
+    const fetchMock = stubResponse({ total: 0, rows: [] })
+
+    await listLibraryFiles({})
+
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('month=')
+  })
+
+  it('unwraps the ids envelope', async () => {
+    stubResponse({ ids: ['a', 'b'] })
+    expect(await listLibraryIds({})).toEqual(['a', 'b'])
+  })
+
+  it('builds a thumbnail URL at the grid size by default', () => {
+    expect(thumbUrl('d1')).toBe('/api/thumb/d1?size=400')
+    expect(thumbUrl('d1', 1600)).toBe('/api/thumb/d1?size=1600')
+  })
+
+  it('escapes a drive id in the thumbnail URL', () => {
+    expect(thumbUrl('a/b')).toBe('/api/thumb/a%2Fb?size=400')
+  })
+
+  it('posts drive ids when tagging in bulk', async () => {
+    const fetchMock = stubResponse({ added: 2 })
+
+    await addFilesToTag(7, ['d1', 'd2'])
+
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/tags/7/files')
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(String(init.body))).toEqual({ drive_ids: ['d1', 'd2'] })
+  })
+
+  it('removes through a POST, because a DELETE body is not dependable', async () => {
+    const fetchMock = stubResponse({ removed: 1 })
+
+    await removeFilesFromTag(7, ['d1'])
+
+    expect(String(fetchMock.mock.calls[0][0])).toBe('/api/tags/7/files/remove')
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('POST')
   })
 })

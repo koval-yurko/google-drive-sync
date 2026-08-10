@@ -1,13 +1,17 @@
 import type {
   ActionSpec,
   DriveFolder,
+  Facets,
   FolderRef,
   Job,
   JobEvent,
+  LibraryFile,
   ReviewMedia,
   ReviewSummary,
   Settings,
+  TagWithCount,
 } from './types'
+import { toQuery, type LibraryFilters } from '../lib/filters'
 
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, {
@@ -90,3 +94,64 @@ export const retryUpload = (entryId: number) =>
     `/api/review/retry/${entryId}`,
     { method: 'POST' },
   )
+
+export const listLibraryFiles = (
+  filters: LibraryFilters,
+  page: { limit?: number; offset?: number } = {},
+) => {
+  const params = toQuery(filters)
+  if (page.limit !== undefined) params.set('limit', String(page.limit))
+  if (page.offset !== undefined) params.set('offset', String(page.offset))
+  return request<{ total: number; rows: LibraryFile[] }>(
+    `/api/library/files?${params.toString()}`,
+  )
+}
+
+export const listLibraryIds = (filters: LibraryFilters) =>
+  request<{ ids: string[] }>(`/api/library/ids?${toQuery(filters).toString()}`)
+    .then((body) => body.ids)
+
+export const getFacets = () => request<Facets>('/api/library/facets')
+
+export const getLibraryFile = (driveId: string) =>
+  request<LibraryFile>(`/api/library/file/${encodeURIComponent(driveId)}`)
+
+/** The backend proxies Drive's render; Chrome cannot decode HEIC itself. */
+export const thumbUrl = (driveId: string, size: 400 | 1600 = 400) =>
+  `/api/thumb/${encodeURIComponent(driveId)}?size=${size}`
+
+export const listTags = () => request<TagWithCount[]>('/api/tags')
+
+export const createTag = (name: string, color?: string) =>
+  request<TagWithCount>('/api/tags', {
+    method: 'POST',
+    body: JSON.stringify(color ? { name, color } : { name }),
+  })
+
+export const patchTag = (id: number, patch: { name?: string; color?: string }) =>
+  request<TagWithCount>(`/api/tags/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+export const deleteTag = (id: number) =>
+  request<{ deleted: number }>(`/api/tags/${id}`, { method: 'DELETE' })
+
+export const mergeTags = (sourceId: number, targetId: number) =>
+  request<{ moved: number; target: TagWithCount }>('/api/tags/merge', {
+    method: 'POST',
+    body: JSON.stringify({ source_id: sourceId, target_id: targetId }),
+  })
+
+export const addFilesToTag = (id: number, driveIds: string[]) =>
+  request<{ added: number }>(`/api/tags/${id}/files`, {
+    method: 'POST',
+    body: JSON.stringify({ drive_ids: driveIds }),
+  })
+
+/** A POST, not a DELETE with a body: 1,284 ids do not fit in a URL. */
+export const removeFilesFromTag = (id: number, driveIds: string[]) =>
+  request<{ removed: number }>(`/api/tags/${id}/files/remove`, {
+    method: 'POST',
+    body: JSON.stringify({ drive_ids: driveIds }),
+  })

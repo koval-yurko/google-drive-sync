@@ -77,3 +77,48 @@ export interface ReviewMedia {
   drive_file_id: string | null
   size: number
 }
+
+export interface Tag {
+  id: number
+  name: string
+  slug: string
+  color: string
+}
+
+export interface TagWithCount extends Tag {
+  file_count: number
+}
+
+export type MediaType = 'image' | 'video' | 'other'
+
+export interface LibraryFile {
+  drive_id: string
+  name: string
+  month: string
+  mime_type: string | null
+  media_type: MediaType
+  size: number | null
+  md5: string | null
+  capture_time: number | null
+  capture_source: string | null
+  place: string | null
+  country: string | null
+  duplicate_of: string | null
+  duplicate_reason: string | null
+  archive_name: string | null
+  tags: Tag[]
+}
+
+export interface Facet {
+  value: string
+  count: number
+}
+
+export interface Facets {
+  total: number
+  months: Facet[]
+  places: Facet[]
+  countries: Facet[]
+  types: Facet[]
+  duplicates: number
+}
