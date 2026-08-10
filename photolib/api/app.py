@@ -79,6 +79,7 @@ def create_app(config: Config | None = None, drive=None) -> FastAPI:
         routes_library,
         routes_review,
         routes_settings,
+        routes_tags,
         routes_thumbs,
     )
 
@@ -88,5 +89,6 @@ def create_app(config: Config | None = None, drive=None) -> FastAPI:
     app.include_router(routes_jobs.router, prefix="/api")
     app.include_router(routes_review.router, prefix="/api")
     app.include_router(routes_library.router, prefix="/api")
+    app.include_router(routes_tags.router, prefix="/api")
     app.include_router(routes_thumbs.router, prefix="/api")
     return app
