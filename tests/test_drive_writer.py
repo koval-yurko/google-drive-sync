@@ -191,3 +191,28 @@ def test_fake_trash_hides_the_file():
     fake.trash("f1")
     assert fake.trashed == ["f1"]
     assert fake.list_children("p") == []
+
+
+def test_update_properties_patches_app_properties():
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"id": "f1"})
+
+    writer_for(handler).update_properties("f1", {"t_family": "1"})
+
+    assert seen == [{"appProperties": {"t_family": "1"}}]
+
+
+def test_update_properties_sends_null_to_delete_one():
+    """Drive deletes an appProperty when its value is null, not by omission."""
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"id": "f1"})
+
+    writer_for(handler).update_properties("f1", {"t_gone": None})
+
+    assert seen == [{"appProperties": {"t_gone": None}}]

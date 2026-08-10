@@ -95,6 +95,25 @@ class DriveWriter:
         )
         raise_for_response(response)
 
+    # ---------- properties ----------
+
+    @retry
+    def update_properties(
+        self, file_id: str, properties: dict[str, str | None]
+    ) -> None:
+        """Set or clear private appProperties on a file.
+
+        A value of None deletes that property — the API's own convention, and
+        the only way `sync_tags` can remove a tag it previously wrote.
+        """
+        response = self._http.patch(
+            f"{API_ROOT}/files/{file_id}",
+            params={"supportsAllDrives": "true", "fields": "id"},
+            headers=self._headers({"Content-Type": JSON_TYPE}),
+            content=json.dumps({"appProperties": properties}),
+        )
+        raise_for_response(response)
+
     # ---------- resumable upload ----------
 
     @retry

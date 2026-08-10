@@ -31,6 +31,8 @@ class FakeDrive:
         self._content: dict[str, bytes] = {}
         self._properties: dict[str, dict] = {}
         self._sessions: dict[str, _Session] = {}
+        self._thumbnails: dict[str, bytes] = {}
+        self.thumbnail_requests: list[tuple[str, int]] = []
         self._ids = itertools.count(1)
         self.range_calls: list[tuple[str, int, int]] = []
         self.trashed: list[str] = []
@@ -72,7 +74,23 @@ class FakeDrive:
         """Test helper: make Drive forget a session, as it does after a week."""
         self._sessions[session_uri].alive = False
 
+    def set_thumbnail(self, file_id: str, content: bytes) -> None:
+        """Test helper: pretend Drive has rendered a thumbnail for this file."""
+        self._thumbnails[file_id] = content
+
     # --- DriveClient interface ---
+
+    def fetch_thumbnail(self, file_id: str, size: int) -> bytes | None:
+        if file_id not in self._files:
+            raise NotFoundError(f"no such file: {file_id}")
+        self.thumbnail_requests.append((file_id, size))
+        content = self._thumbnails.get(file_id)
+        return None if content is None else content + f"-s{size}".encode()
+
+    def app_properties(self, file_id: str) -> dict[str, str]:
+        if file_id not in self._files:
+            raise NotFoundError(f"no such file: {file_id}")
+        return dict(self._properties.get(file_id, {}))
 
     def get_file(self, file_id: str) -> DriveFile:
         if file_id not in self._files:
@@ -117,6 +135,18 @@ class FakeDrive:
         self.trashed.append(file_id)
         del self._files[file_id]
         self._content.pop(file_id, None)
+
+    def update_properties(
+        self, file_id: str, properties: dict[str, str | None]
+    ) -> None:
+        if file_id not in self._files:
+            raise NotFoundError(f"no such file: {file_id}")
+        current = self._properties.setdefault(file_id, {})
+        for key, value in properties.items():
+            if value is None:
+                current.pop(key, None)
+            else:
+                current[key] = value
 
     def start_session(
         self,
