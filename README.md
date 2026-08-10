@@ -49,9 +49,12 @@ Run these in order from the UI.
 | Plan Organization | Resolves dates, places, duplicates, destinations | No |
 | Review Plan | Shows every file and where it would go | No |
 | **Organize Photos** | **Uploads every planned file into `Photos/YYYY-MM/`** | **Yes** |
+| Library | Browse, filter, and tag what is now in Drive | No |
+| Tags | Create, rename, merge, and delete tags | No |
+| **Sync Tags to Drive** | **Mirrors tags onto each file's `appProperties`** | **Yes** |
 | **Clear Stale Trees** | **Moves a redundant extracted tree to Drive's trash** | **Yes** |
 
-The first five are safe to repeat. The last two mutate Drive.
+Everything unbolded is safe to repeat. The three bolded rows mutate Drive.
 
 Organised photos are destined for `Photos/YYYY-MM/`. The existing `back_*`
 folders are indexed for duplicate detection and are never read from, written to,
@@ -85,6 +88,35 @@ own MD5. Re-run with `confirm` to act. It moves files to Drive's trash, where
 they stay recoverable; nothing is permanently deleted and the source archives
 are never touched.
 
+## Browsing and tagging
+
+The Library page shows what Drive actually holds under `photos_root`, grouped
+by month. It is built from the last Scan, so re-run Scan after an Organize to
+see new files. Thumbnails come from Drive's own renderer through a local disk
+cache in `.cache/thumbnails` — Chrome cannot display HEIC, and 591 of these
+files are HEIC. Videos play in Drive's embedded preview, which handles the
+HEVC `.MOV` files browsers refuse.
+
+Filter by month, place, country, media type, tag, or duplicate status, and
+combine them freely. Duplicates are a filter here, not a separate page: those
+files were uploaded anyway, so they are part of the library. Select with
+click, shift-click for a range, ⌘-click to toggle, or **Select all matching
+this filter**, which selects the entire result set rather than only the tiles
+on screen. Double-click opens one file without disturbing the selection.
+
+Tags are yours to invent — `family`, `greece-2025`, `print-these`. Place,
+month, year and media type are *not* tags: they are filters derived from data
+the catalog already holds, so there is nothing to regenerate and nothing to
+go stale. Tagging writes only to the local catalog, which is why it is
+instant.
+
+**Sync Tags to Drive** is what makes tags durable. It compares each file's
+`t_*` appProperties against the catalog, reports every add and removal, and
+changes nothing until you re-run it with `confirm`. Tags then travel with the
+file and survive the loss of this machine. Drive allows 30 properties per
+file and Organize already uses about five, so a file carrying more than 25
+tags is reported and skipped rather than failing obscurely.
+
 ## Tests
 
 ```bash
@@ -106,6 +138,7 @@ credentials live in the main checkout, so point the live suite at it:
 - `photolib/ziparchive/` — reads ZIP indexes and extracts single entries using
   HTTP byte ranges, so a 2.15 GB archive is never downloaded to retrieve one photo
 - `photolib/db/` — SQLite catalog holding settings, archive indexes, and jobs
+- `photolib/thumbs.py` — disk-cached proxy for Drive's thumbnail renders
 - `photolib/actions/` — one module per capability; each becomes a page in the UI
 - `photolib/jobs/` — a background worker that runs actions and streams progress
 - `photolib/api/` — FastAPI routes
