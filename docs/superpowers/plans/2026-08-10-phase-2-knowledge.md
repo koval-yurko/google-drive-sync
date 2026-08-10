@@ -2429,8 +2429,11 @@ afterEach(() => vi.clearAllMocks())
 describe('ReviewPage', () => {
   it('shows the summary totals', async () => {
     render(<ReviewPage />)
-    expect(await screen.findByText('2')).toBeTruthy()
-    expect(screen.getByText(/media files/i)).toBeTruthy()
+    // Several tiles legitimately show the same number — media and planned are
+    // both 2 once everything is planned — so assert on the tile as a unit
+    // rather than on a bare value that matches more than one element.
+    const label = await screen.findByText(/media files/i)
+    expect(label.closest('.card')?.textContent).toContain('2')
   })
 
   it('lists every planned file with its destination', async () => {

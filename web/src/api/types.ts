@@ -43,3 +43,32 @@ export interface JobEvent {
   level: string
   message: string
 }
+
+export interface ReviewSummary {
+  media: number
+  planned: number
+  unplanned: number
+  duplicates: number
+  with_place: number
+  with_sidecar: number
+  pending: number
+  archives: number
+  entries: number
+  drive_files: number
+}
+
+export interface ReviewMedia {
+  name: string
+  path: string
+  archive_name: string
+  target_folder: string | null
+  target_name: string | null
+  capture_time: number | null
+  capture_source: string | null
+  place: string | null
+  country: string | null
+  duplicate_of: string | null
+  duplicate_reason: string | null
+  upload_status: string
+  size: number
+}

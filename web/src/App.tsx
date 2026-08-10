@@ -5,6 +5,7 @@ import type { ActionSpec } from './api/types'
 import { Nav } from './components/Nav'
 import { ActionPage } from './pages/ActionPage'
 import { JobsPage } from './pages/JobsPage'
+import { ReviewPage } from './pages/ReviewPage'
 import { SettingsPage } from './pages/SettingsPage'
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/settings" replace />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/actions/:actionId" element={<ActionPage actions={actions} />} />
+          <Route path="/review" element={<ReviewPage />} />
           <Route path="/jobs" element={<JobsPage />} />
         </Routes>
       </main>
