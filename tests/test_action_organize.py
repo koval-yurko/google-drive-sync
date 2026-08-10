@@ -1,0 +1,180 @@
+import hashlib
+import json
+
+import pytest
+
+from photolib.actions.base import ActionContext
+from photolib.actions.organize import Params, run
+from photolib.actions.pair_metadata import Params as PairParams
+from photolib.actions.pair_metadata import run as pair
+from photolib.actions.plan_organize import Params as PlanParams
+from photolib.actions.plan_organize import run as plan
+from photolib.actions.scan_archives import Params as ScanParams
+from photolib.actions.scan_archives import run as scan
+from photolib.config import Config
+from photolib.db import catalog
+from photolib.db.media_repo import MediaRepo
+from photolib.db.settings_repo import PHOTOS_ROOT, ZIP_SOURCE, FolderRef, SettingsRepo
+from tests.fakes.fake_drive import FakeDrive
+from tests.fixtures.zipbuilder import build_zip
+
+HEIC = b"pretend this is a photograph" * 100
+MOV = b"pretend this is a video" * 200
+
+SIDECAR = json.dumps({
+    "title": "IMG_1.HEIC",
+    "photoTakenTime": {"timestamp": "1700000000"},     # 2023-11-14 UTC
+    "geoData": {"latitude": 52.23, "longitude": 21.01},
+}).encode()
+
+ARCHIVE = {
+    "Takeout/Google Photos/Photos from 2023/IMG_1.HEIC": HEIC,
+    "Takeout/Google Photos/Photos from 2023/IMG_1.HEIC.supplemental-metadata.json":
+        SIDECAR,
+    "Takeout/Google Photos/Photos from 2019/IMG_2.MOV": MOV,
+}
+
+
+@pytest.fixture
+def ctx(tmp_path, monkeypatch):
+    monkeypatch.setenv("PHOTOLIB_HOME", str(tmp_path))
+    monkeypatch.delenv("GOOGLE_MAPS_API_KEY", raising=False)
+    cfg = Config.load()
+    conn = catalog.connect(cfg.db_path)
+    settings = SettingsRepo(conn)
+    drive = FakeDrive()
+    drive.add_folder("zips", "zip-source")
+    drive.add_file("z1", "takeout-001.zip", build_zip(ARCHIVE), parent="zips")
+    drive.add_folder("photos", "Photos")
+    settings.set_folder(ZIP_SOURCE, FolderRef(id="zips", name="zip-source"))
+    settings.set_folder(PHOTOS_ROOT, FolderRef(id="photos", name="Photos"))
+    # The fake speaks both halves of the interface, so it is drive and writer.
+    context = ActionContext(
+        conn=conn, drive=drive, settings=settings, config=cfg, writer=drive
+    )
+    list(scan(context, ScanParams()))
+    list(pair(context, PairParams()))
+    list(plan(context, PlanParams()))
+    return context
+
+
+def uploaded_names(ctx) -> dict:
+    """Every uploaded file, keyed by name, wherever it landed."""
+    found = {}
+    for folder in ctx.drive.list_children("photos", folders_only=True):
+        for file in ctx.drive.list_children(folder.id):
+            found[file.name] = (folder.name, file)
+    return found
+
+
+def test_every_planned_file_is_uploaded(ctx):
+    list(run(ctx, Params()))
+    found = uploaded_names(ctx)
+    assert set(found) == {"IMG_1.HEIC", "IMG_2.MOV"}
+    assert found["IMG_1.HEIC"][0] == "2023-11"
+    assert found["IMG_2.MOV"][0] == "2019-01"
+
+
+def test_uploaded_bytes_are_the_real_bytes(ctx):
+    list(run(ctx, Params()))
+    file = uploaded_names(ctx)["IMG_1.HEIC"][1]
+    assert file.md5 == hashlib.md5(HEIC).hexdigest()
+
+
+def test_the_catalog_records_the_drive_id_and_md5(ctx):
+    list(run(ctx, Params()))
+    rows = {r["name"]: r for r in MediaRepo(ctx.conn).all_media()}
+    assert rows["IMG_1.HEIC"]["upload_status"] == "done"
+    assert rows["IMG_1.HEIC"]["drive_file_id"]
+    assert rows["IMG_1.HEIC"]["md5"] == hashlib.md5(HEIC).hexdigest()
+
+
+def test_metadata_rides_along_but_no_tags(ctx):
+    list(run(ctx, Params()))
+    file = uploaded_names(ctx)["IMG_1.HEIC"][1]
+    props = ctx.drive.properties_of(file.id)
+    assert props["source_archive"] == "takeout-001.zip"
+    assert "source_crc" in props and "capture_time" in props
+    assert not any(key.startswith("t_") for key in props)   # tags are Phase 4
+
+
+def test_rerunning_uploads_nothing_twice(ctx):
+    list(run(ctx, Params()))
+    before = len(ctx.drive.trashed), len(uploaded_names(ctx))
+    list(run(ctx, Params()))
+    assert (len(ctx.drive.trashed), len(uploaded_names(ctx))) == before
+
+
+def test_a_month_folder_is_created_once(ctx):
+    list(run(ctx, Params()))
+    list(run(ctx, Params()))
+    names = [f.name for f in ctx.drive.list_children("photos", folders_only=True)]
+    assert sorted(names) == ["2019-01", "2023-11"]
+
+
+def test_an_unplanned_catalog_is_refused(ctx):
+    MediaRepo(ctx.conn).clear_plan()
+    events = list(run(ctx, Params()))
+    assert events[-1].level == "error"
+    assert uploaded_names(ctx) == {}
+
+
+def test_a_missing_writer_is_refused(ctx):
+    ctx.writer = None
+    events = list(run(ctx, Params()))
+    assert events[-1].level == "error"
+
+
+def test_a_failed_file_is_recorded_and_the_others_still_run(ctx, monkeypatch):
+    from photolib import transfer
+
+    real = transfer.transfer_entry
+
+    def explode(**kwargs):
+        if kwargs["name"] == "IMG_2.MOV":
+            raise transfer.TransferError("CRC mismatch", "crc")
+        return real(**kwargs)
+
+    monkeypatch.setattr("photolib.actions.organize.transfer_entry", explode)
+    list(run(ctx, Params()))
+    rows = {r["name"]: r for r in MediaRepo(ctx.conn).all_media()}
+    assert rows["IMG_2.MOV"]["upload_status"] == "error"
+    assert "CRC mismatch" in rows["IMG_2.MOV"]["error"]
+    assert rows["IMG_1.HEIC"]["upload_status"] == "done"
+
+
+def test_errors_are_left_alone_unless_retry_is_asked_for(ctx):
+    repo = MediaRepo(ctx.conn)
+    # Look the entry up by name — entry ids depend on the order Scan happened
+    # to walk the archive, which is not something a test should assume.
+    entry_id = next(
+        r["entry_id"] for r in repo.pending_uploads() if r["name"] == "IMG_1.HEIC"
+    )
+    repo.mark_failed(entry_id, "earlier failure")
+    list(run(ctx, Params()))
+    assert "IMG_1.HEIC" not in uploaded_names(ctx)
+    list(run(ctx, Params(retry_errors=True)))
+    assert "IMG_1.HEIC" in uploaded_names(ctx)
+
+
+def test_limit_caps_a_cautious_first_run(ctx):
+    list(run(ctx, Params(limit=1)))
+    assert len(uploaded_names(ctx)) == 1
+
+
+def test_progress_is_reported_in_bytes(ctx):
+    """File counts misreport a run mixing 45 KB stills with 500 MB videos."""
+    events = [e for e in run(ctx, Params()) if e.progress is not None]
+    assert events[-1].progress == 1.0
+    assert all(0.0 <= e.progress <= 1.0 for e in events)
+
+
+def test_the_spool_directory_is_left_empty(ctx):
+    list(run(ctx, Params()))
+    spool = ctx.config.repo_root / ".cache" / "spool"
+    assert not spool.exists() or list(spool.iterdir()) == []
+
+
+def test_a_single_worker_works_too(ctx):
+    list(run(ctx, Params(workers=1)))
+    assert len(uploaded_names(ctx)) == 2
