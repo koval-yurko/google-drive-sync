@@ -39,8 +39,7 @@ Open http://localhost:5173. Vite proxies `/api` to the backend.
 
 ## The pipeline
 
-Run these in order from the UI. The first three are safe to repeat — none of
-them writes to Drive.
+Run these in order from the UI.
 
 | Action | Does | Writes to Drive |
 | --- | --- | --- |
@@ -48,8 +47,11 @@ them writes to Drive.
 | Scan Archives | Indexes archive contents and the destination folder | No |
 | Pair Metadata | Matches sidecars to media across archive parts | No |
 | Plan Organization | Resolves dates, places, duplicates, destinations | No |
+| Review Plan | Shows every file and where it would go | No |
+| **Organize Photos** | **Uploads every planned file into `Photos/YYYY-MM/`** | **Yes** |
+| **Clear Stale Trees** | **Moves a redundant extracted tree to Drive's trash** | **Yes** |
 
-Then open **Review Plan** to see every file and where it would go.
+The first five are safe to repeat. The last two mutate Drive.
 
 Organised photos are destined for `Photos/YYYY-MM/`. The existing `back_*`
 folders are indexed for duplicate detection and are never read from, written to,
@@ -57,6 +59,31 @@ renamed, or moved.
 
 Files that already exist in the destination are flagged but **still uploaded** —
 deduplication is a deliberate later step, not part of this pipeline.
+
+## Running the migration
+
+Organize is resumable and re-runnable. Every file is verified twice: against the
+CRC32 in the ZIP index before a byte is uploaded, and against the MD5 Drive
+returns afterwards. A file that fails either check is marked `error` and left
+for you to retry from the Review page; it is never half-written.
+
+- `workers` (default 4) — parallel uploads. Drop it to 1 if Drive throttles.
+- `limit` — cap the batch. Worth setting for the first run.
+- `retry_errors` — include previously failed files. Off by default, so an
+  unattended re-run never silently re-attempts a file that failed for a reason.
+
+Closing the browser does not stop a run. Killing the process is safe: finished
+files are skipped on the next run and an interrupted upload resumes from
+whatever Drive confirms it holds.
+
+## Clearing the stale trees
+
+`Clear Stale Trees` takes the Drive folder id of one extracted tree and reports
+what it would trash without changing anything. A file is eligible only when a
+file of the same name has already been uploaded **and** verified against Drive's
+own MD5. Re-run with `confirm` to act. It moves files to Drive's trash, where
+they stay recoverable; nothing is permanently deleted and the source archives
+are never touched.
 
 ## Tests
 
