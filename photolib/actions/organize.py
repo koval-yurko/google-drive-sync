@@ -15,7 +15,6 @@ on this generator's thread, fed by a queue the workers push to.
 from __future__ import annotations
 
 import queue
-import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +23,7 @@ from typing import Iterator
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.db.media_repo import MediaRepo
 from photolib.db.settings_repo import PHOTOS_ROOT
+from photolib.downloads import run_folder_name, sweep_empty
 from photolib.drive.errors import DriveError
 from photolib.transfer import TransferError, transfer_entry
 from photolib.ziparchive.reader import ZipEntry
@@ -128,10 +128,25 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         )
         return
 
-    spool_dir = Path(ctx.config.repo_root) / ".cache" / "spool"
-    if spool_dir.exists():
-        shutil.rmtree(spool_dir)        # sweep anything a crash orphaned
-    spool_dir.mkdir(parents=True, exist_ok=True)
+    downloads_root = Path(ctx.config.downloads_dir)
+    run_dir = downloads_root / run_folder_name(datetime.now())
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        yield ProgressEvent(
+            f"Cannot use the downloads folder {downloads_root}: {exc}",
+            progress=1.0,
+            level="error",
+        )
+        return
+
+    # Another run's leftovers are evidence, not litter. Empty folders say
+    # nothing, so they go; folders holding bytes are reported and left alone.
+    for stale in sweep_empty(downloads_root, keep=run_dir):
+        yield ProgressEvent(
+            f"An earlier run left {stale['files']} unfinished file(s), "
+            f"{stale['bytes'] / 1e9:.2f} GB, in downloads/{stale['dir']}/."
+        )
 
     try:
         folders = _prepare_folders(ctx, photos_root.id, rows)
@@ -163,7 +178,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
             parent_id=folders[row["target_folder"]],
             name=row["target_name"],
             properties=_properties(row),
-            spool_dir=spool_dir,
+            spool_dir=run_dir,
             session_uri=row["upload_session_uri"],
             on_session=lambda uri: sessions.put((row["entry_id"], uri)),
         )
@@ -207,7 +222,14 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
             )
 
     drain_sessions()
-    shutil.rmtree(spool_dir, ignore_errors=True)
+    leftover = [f for f in run_dir.iterdir() if f.is_file()]
+    if leftover:
+        yield ProgressEvent(
+            f"{len(leftover)} unfinished file(s) left in "
+            f"downloads/{run_dir.name}/."
+        )
+    else:
+        run_dir.rmdir()
 
     detail = f"Uploaded {uploaded} file(s)."
     if failed:
