@@ -36,6 +36,7 @@ def _index_destination(ctx: ActionContext, folder_id: str) -> int:
                 {
                     "drive_id": child.id, "name": child.name, "parent_path": "",
                     "md5": child.md5, "size": child.size,
+                    "mime_type": child.mime_type,
                 }
             )
             continue
@@ -46,10 +47,10 @@ def _index_destination(ctx: ActionContext, folder_id: str) -> int:
                 {
                     "drive_id": grandchild.id, "name": grandchild.name,
                     "parent_path": child.name, "md5": grandchild.md5,
-                    "size": grandchild.size,
+                    "size": grandchild.size, "mime_type": grandchild.mime_type,
                 }
             )
-    ScanRepo(ctx.conn).replace_drive_files(rows)
+    ScanRepo(ctx.conn).upsert_drive_files(rows)
     return len(rows)
 
 

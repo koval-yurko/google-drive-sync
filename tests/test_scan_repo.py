@@ -55,9 +55,9 @@ def test_entries_of_kind_carries_the_archive_drive_id(conn):
     assert row["local_header_offset"] == 0
 
 
-def test_replace_drive_files_round_trips(conn):
+def test_upsert_drive_files_round_trips(conn):
     repo = ScanRepo(conn)
-    repo.replace_drive_files([
+    repo.upsert_drive_files([
         {"drive_id": "f1", "name": "IMG_1.HEIC", "parent_path": "back_2024_01",
          "md5": "abc", "size": 10},
         {"drive_id": "f2", "name": "IMG_1.HEIC", "parent_path": "back_2025_01",
@@ -68,13 +68,96 @@ def test_replace_drive_files_round_trips(conn):
     assert {r["parent_path"] for r in by_name["IMG_1.HEIC"]} == {"back_2024_01", "back_2025_01"}
 
 
-def test_replace_drive_files_clears_the_previous_index(conn):
+def test_upsert_drive_files_clears_the_previous_index(conn):
     repo = ScanRepo(conn)
-    repo.replace_drive_files([
+    repo.upsert_drive_files([
         {"drive_id": "f1", "name": "old.HEIC", "parent_path": "p", "md5": None, "size": 1}
     ])
-    repo.replace_drive_files([
+    repo.upsert_drive_files([
         {"drive_id": "f2", "name": "new.HEIC", "parent_path": "p", "md5": None, "size": 1}
     ])
     assert "old.HEIC" not in repo.drive_file_names()
     assert repo.counts()["drive_files"] == 1
+
+
+def _rows(*specs):
+    return [
+        {
+            "drive_id": drive_id, "name": name, "parent_path": parent,
+            "md5": "abc", "size": 10, "mime_type": mime,
+        }
+        for drive_id, name, parent, mime in specs
+    ]
+
+
+def test_upsert_drive_files_inserts(conn):
+    ScanRepo(conn).upsert_drive_files(
+        _rows(("d1", "IMG_1.HEIC", "2025-05", "image/heic"))
+    )
+    row = conn.execute("SELECT * FROM drive_files").fetchone()
+    assert (row["drive_id"], row["parent_path"], row["mime_type"]) == (
+        "d1", "2025-05", "image/heic"
+    )
+    assert row["indexed_at"] is not None
+
+
+def test_upsert_drive_files_keeps_tags_across_a_rescan(conn):
+    """The bug this guards: re-Scan silently deleting every tag."""
+    repo = ScanRepo(conn)
+    repo.upsert_drive_files(_rows(("d1", "IMG_1.HEIC", "2025-05", "image/heic")))
+    conn.execute("INSERT INTO tags (name, slug, color) VALUES ('Family', 'family', '#f00')")
+    conn.execute("INSERT INTO file_tags (drive_id, tag_id) VALUES ('d1', 1)")
+    conn.commit()
+
+    repo.upsert_drive_files(_rows(("d1", "IMG_1.HEIC", "2025-05", "image/heic")))
+
+    assert conn.execute("SELECT COUNT(*) FROM file_tags").fetchone()[0] == 1
+
+
+def test_upsert_drive_files_updates_a_moved_file(conn):
+    repo = ScanRepo(conn)
+    repo.upsert_drive_files(_rows(("d1", "IMG_1.HEIC", "2025-04", "image/heic")))
+    repo.upsert_drive_files(_rows(("d1", "IMG_1.HEIC", "2025-05", "image/heic")))
+
+    rows = list(conn.execute("SELECT parent_path FROM drive_files"))
+    assert len(rows) == 1
+    assert rows[0]["parent_path"] == "2025-05"
+
+
+def test_upsert_drive_files_drops_what_left_drive(conn):
+    repo = ScanRepo(conn)
+    repo.upsert_drive_files(
+        _rows(
+            ("d1", "IMG_1.HEIC", "2025-05", "image/heic"),
+            ("d2", "IMG_2.HEIC", "2025-05", "image/heic"),
+        )
+    )
+    repo.upsert_drive_files(_rows(("d1", "IMG_1.HEIC", "2025-05", "image/heic")))
+
+    assert [r["drive_id"] for r in conn.execute("SELECT drive_id FROM drive_files")] == ["d1"]
+
+
+def test_upsert_drive_files_with_nothing_clears_the_index(conn):
+    repo = ScanRepo(conn)
+    repo.upsert_drive_files(_rows(("d1", "IMG_1.HEIC", "2025-05", "image/heic")))
+    repo.upsert_drive_files([])
+
+    assert conn.execute("SELECT COUNT(*) FROM drive_files").fetchone()[0] == 0
+
+
+def test_upsert_drive_files_handles_more_rows_than_sqlite_variables(conn):
+    rows = _rows(*[(f"d{n}", f"IMG_{n}.HEIC", "2025-05", "image/heic") for n in range(1500)])
+    ScanRepo(conn).upsert_drive_files(rows)
+    assert conn.execute("SELECT COUNT(*) FROM drive_files").fetchone()[0] == 1500
+
+
+def test_upsert_drive_files_revives_a_trashed_row(conn):
+    """A file restored from Drive's trash must reappear in the library."""
+    repo = ScanRepo(conn)
+    repo.upsert_drive_files(_rows(("d1", "IMG_1.HEIC", "2025-05", "image/heic")))
+    conn.execute("UPDATE drive_files SET trashed_at = 'then' WHERE drive_id = 'd1'")
+    conn.commit()
+
+    repo.upsert_drive_files(_rows(("d1", "IMG_1.HEIC", "2025-05", "image/heic")))
+
+    assert conn.execute("SELECT trashed_at FROM drive_files").fetchone()["trashed_at"] is None
