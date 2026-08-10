@@ -14,7 +14,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 # (table, column, full column definition)
@@ -24,6 +24,8 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("media", "session_started_at", "session_started_at TEXT"),
     ("media", "attempts", "attempts INTEGER NOT NULL DEFAULT 0"),
     ("drive_files", "trashed_at", "trashed_at TEXT"),
+    ("drive_files", "mime_type", "mime_type TEXT"),
+    ("drive_files", "synced_tags", "synced_tags TEXT"),
 )
 
 
