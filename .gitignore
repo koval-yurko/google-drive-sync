@@ -12,8 +12,12 @@ token.json
 
 node_modules/
 web/dist/
+# SQLite runs in WAL mode, so the catalog is three files, not one.
 *.db
+*.db-shm
+*.db-wal
 .cache/
+.pytest_cache/
 
 # local secrets
 .env
