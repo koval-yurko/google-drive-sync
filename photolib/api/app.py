@@ -12,6 +12,7 @@ from photolib.config import Config
 from photolib.db import catalog
 from photolib.db.jobs_repo import JobsRepo
 from photolib.db.settings_repo import SettingsRepo
+from photolib.downloads import InflightRegistry
 from photolib.drive.auth import TokenProvider
 from photolib.drive.client import DriveClient
 from photolib.drive.writer import DriveWriter
@@ -29,6 +30,7 @@ def create_app(config: Config | None = None, drive=None) -> FastAPI:
     settings = SettingsRepo(conn)
     jobs = JobsRepo(conn)
     broker = EventBroker()
+    inflight = InflightRegistry()
 
     # A fake injected by tests already speaks the writer protocol; a real
     # client needs wrapping. DriveWriter resolves the client lazily, so this
@@ -42,7 +44,7 @@ def create_app(config: Config | None = None, drive=None) -> FastAPI:
     def context_factory() -> ActionContext:
         return ActionContext(
             conn=conn, drive=drive_client, settings=settings, config=cfg,
-            writer=drive_writer,
+            writer=drive_writer, inflight=inflight,
         )
 
     runner = JobRunner(context_factory=context_factory, repo=jobs, broker=broker)
@@ -69,11 +71,13 @@ def create_app(config: Config | None = None, drive=None) -> FastAPI:
     app.state.settings = settings
     app.state.jobs = jobs
     app.state.broker = broker
+    app.state.inflight = inflight
     app.state.runner = runner
     app.state.thumbnails = ThumbnailCache(cfg.thumbnail_cache_dir, drive_client)
 
     from photolib.api import (
         routes_actions,
+        routes_downloads,
         routes_drive,
         routes_jobs,
         routes_library,
@@ -91,4 +95,5 @@ def create_app(config: Config | None = None, drive=None) -> FastAPI:
     app.include_router(routes_library.router, prefix="/api")
     app.include_router(routes_tags.router, prefix="/api")
     app.include_router(routes_thumbs.router, prefix="/api")
+    app.include_router(routes_downloads.router, prefix="/api")
     return app

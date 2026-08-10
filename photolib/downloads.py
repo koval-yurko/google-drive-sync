@@ -117,6 +117,25 @@ def run_folder_name(started: datetime) -> str:
     return started.strftime("%Y-%m-%d_%H-%M-%S")
 
 
+def stale_runs(root: Path, active: Path | None) -> list[dict]:
+    """Report leftover run folders holding bytes. Deletes nothing."""
+    if not root.is_dir():
+        return []
+    found: list[dict] = []
+    for folder in sorted(root.iterdir()):
+        if folder == active or not folder.is_dir():
+            continue
+        files = [f for f in folder.iterdir() if f.is_file()]
+        if not files:
+            continue
+        found.append({
+            "dir": folder.name,
+            "files": len(files),
+            "bytes": sum(f.stat().st_size for f in files),
+        })
+    return found
+
+
 def sweep_empty(root: Path, keep: Path) -> list[dict]:
     """Delete leftover run folders that hold nothing; report the ones that do.
 
@@ -124,17 +143,11 @@ def sweep_empty(root: Path, keep: Path) -> list[dict]:
     folder holding bytes is the only evidence a crashed run leaves, so it is
     reported and left for its owner to delete.
     """
-    stale: list[dict] = []
+    if not root.is_dir():
+        return []
     for folder in sorted(root.iterdir()):
         if folder == keep or not folder.is_dir():
             continue
-        files = [f for f in folder.iterdir() if f.is_file()]
-        if not files:
+        if not any(f.is_file() for f in folder.iterdir()):
             folder.rmdir()
-            continue
-        stale.append({
-            "dir": folder.name,
-            "files": len(files),
-            "bytes": sum(f.stat().st_size for f in files),
-        })
-    return stale
+    return stale_runs(root, active=keep)
