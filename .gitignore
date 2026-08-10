@@ -17,6 +17,7 @@ web/dist/
 *.db-shm
 *.db-wal
 .cache/
+downloads/
 .pytest_cache/
 
 # local secrets

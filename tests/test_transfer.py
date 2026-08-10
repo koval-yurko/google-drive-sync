@@ -178,3 +178,51 @@ def test_stored_entries_are_handled_too(tmp_path):
     transfer.spool_entry(read_range, entry, dest)
     assert dest.read_bytes() == PAYLOAD
     assert zlib.crc32(dest.read_bytes()) == entry.crc32
+
+
+def test_a_claimed_part_file_is_named_after_the_photo(tmp_path):
+    path = transfer.claim_part_path(tmp_path, "IMG_1.HEIC")
+    assert path.name == "IMG_1.HEIC.part"
+    assert path.exists()
+
+
+def test_a_second_claim_of_the_same_name_gets_a_number(tmp_path):
+    first = transfer.claim_part_path(tmp_path, "IMG_1.HEIC")
+    second = transfer.claim_part_path(tmp_path, "IMG_1.HEIC")
+    assert first.name == "IMG_1.HEIC.part"
+    assert second.name == "IMG_1.HEIC.2.part"
+
+
+def test_a_separator_in_the_name_cannot_escape_the_folder(tmp_path):
+    path = transfer.claim_part_path(tmp_path, "2023/IMG_1.HEIC")
+    assert path.parent == tmp_path
+    assert path.name == "2023_IMG_1.HEIC.part"
+
+
+def test_claiming_gives_up_rather_than_spinning(tmp_path, monkeypatch):
+    monkeypatch.setattr(transfer, "MAX_NAME_ATTEMPTS", 3)
+    for _ in range(3):
+        transfer.claim_part_path(tmp_path, "IMG_1.HEIC")
+    with pytest.raises(transfer.TransferError) as exc:
+        transfer.claim_part_path(tmp_path, "IMG_1.HEIC")
+    assert exc.value.stage == "read"
+
+
+def test_the_spooled_file_is_visible_under_its_real_name(tmp_path):
+    """on_session fires after spooling, so the folder is at its fullest."""
+    fake = FakeDrive()
+    fake.add_folder("p", "2023-11")
+    seen: list[str] = []
+    transfer_one(
+        tmp_path, fake,
+        on_session=lambda uri: seen.extend(p.name for p in tmp_path.iterdir()),
+    )
+    assert seen == ["IMG_1.HEIC.part"]
+
+
+def test_the_spool_file_is_reported_as_it_is_claimed(tmp_path):
+    fake = FakeDrive()
+    fake.add_folder("p", "2023-11")
+    claimed: list = []
+    transfer_one(tmp_path, fake, on_spool=claimed.append)
+    assert [p.name for p in claimed] == ["IMG_1.HEIC.part"]

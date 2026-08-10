@@ -14,6 +14,7 @@ class Config:
     credentials_path: Path
     token_path: Path
     thumbnail_cache_dir: Path
+    downloads_dir: Path
 
     @classmethod
     def load(cls) -> "Config":
@@ -25,4 +26,5 @@ class Config:
             credentials_path=root / "credentials.json",
             token_path=root / "token.json",
             thumbnail_cache_dir=root / ".cache" / "thumbnails",
+            downloads_dir=root / "downloads",
         )

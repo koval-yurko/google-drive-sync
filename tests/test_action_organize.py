@@ -1,8 +1,10 @@
 import hashlib
 import json
+import re
 
 import pytest
 
+from photolib.actions import organize
 from photolib.actions.base import ActionContext
 from photolib.actions.organize import Params, run
 from photolib.actions.pair_metadata import Params as PairParams
@@ -15,6 +17,8 @@ from photolib.config import Config
 from photolib.db import catalog
 from photolib.db.media_repo import MediaRepo
 from photolib.db.settings_repo import PHOTOS_ROOT, ZIP_SOURCE, FolderRef, SettingsRepo
+from photolib.downloads import InflightRegistry, observe
+from photolib.transfer import TransferError
 from tests.fakes.fake_drive import FakeDrive
 from tests.fixtures.zipbuilder import build_zip
 
@@ -26,6 +30,8 @@ SIDECAR = json.dumps({
     "photoTakenTime": {"timestamp": "1700000000"},     # 2023-11-14 UTC
     "geoData": {"latitude": 52.23, "longitude": 21.01},
 }).encode()
+
+STAMP = re.compile(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}")
 
 ARCHIVE = {
     "Takeout/Google Photos/Photos from 2023/IMG_1.HEIC": HEIC,
@@ -169,12 +175,95 @@ def test_progress_is_reported_in_bytes(ctx):
     assert all(0.0 <= e.progress <= 1.0 for e in events)
 
 
-def test_the_spool_directory_is_left_empty(ctx):
+def test_the_run_gets_its_own_stamped_folder(ctx):
+    events = run(ctx, Params())
+    next(events)                                   # the "Uploading N file(s)" event
+    live = [p.name for p in ctx.config.downloads_dir.iterdir()]
+    assert len(live) == 1
+    assert STAMP.fullmatch(live[0])
+    list(events)                                   # drain the run
+
+
+def test_the_run_folder_is_removed(ctx):
     list(run(ctx, Params()))
-    spool = ctx.config.repo_root / ".cache" / "spool"
-    assert not spool.exists() or list(spool.iterdir()) == []
+    assert list(ctx.config.downloads_dir.iterdir()) == []
+
+
+def test_an_empty_leftover_folder_is_pruned(ctx):
+    orphan = ctx.config.downloads_dir / "2026-08-09_10-00-00"
+    orphan.mkdir(parents=True)
+    list(run(ctx, Params()))
+    assert not orphan.exists()
+
+
+def test_a_leftover_folder_holding_bytes_is_kept_and_reported(ctx):
+    orphan = ctx.config.downloads_dir / "2026-08-09_22-14-01"
+    orphan.mkdir(parents=True)
+    (orphan / "IMG_9.HEIC.part").write_bytes(b"x" * 2048)
+
+    messages = [event.message for event in run(ctx, Params())]
+
+    assert (orphan / "IMG_9.HEIC.part").exists()
+    assert any("2026-08-09_22-14-01" in m for m in messages)
+
+
+def test_an_unusable_downloads_folder_stops_the_run_before_any_upload(ctx):
+    ctx.config.downloads_dir.parent.mkdir(parents=True, exist_ok=True)
+    ctx.config.downloads_dir.write_bytes(b"not a folder")
+
+    events = list(run(ctx, Params()))
+
+    assert events[-1].level == "error"
+    assert uploaded_names(ctx) == {}
 
 
 def test_a_single_worker_works_too(ctx):
     list(run(ctx, Params(workers=1)))
     assert len(uploaded_names(ctx)) == 2
+
+
+def test_a_live_transfer_is_visible_while_it_moves(ctx, monkeypatch):
+    """The registry is read from another thread, so read it from this one."""
+    registry = InflightRegistry()
+    ctx.inflight = registry
+    seen: list = []
+
+    original = organize.transfer_entry
+
+    def spy(**kwargs):
+        on_spool = kwargs.pop("on_spool")
+
+        def watch(path):
+            on_spool(path)
+            seen.extend(observe(registry.snapshot()))
+
+        return original(on_spool=watch, **kwargs)
+
+    monkeypatch.setattr(organize, "transfer_entry", spy)
+    list(run(ctx, Params(workers=1)))
+
+    assert {view.name for view in seen} == {"IMG_1.HEIC", "IMG_2.MOV"}
+    assert {view.destination for view in seen} == {"Photos/2023-11", "Photos/2019-01"}
+    assert all(view.total > 0 for view in seen)
+
+
+def test_the_registry_is_empty_when_the_run_ends(ctx):
+    registry = InflightRegistry()
+    ctx.inflight = registry
+    list(run(ctx, Params()))
+    assert registry.snapshot() == []
+    assert registry.run_dir is None
+
+
+def test_a_failed_transfer_leaves_no_ghost(ctx, monkeypatch):
+    registry = InflightRegistry()
+    ctx.inflight = registry
+
+    def explode(**kwargs):
+        kwargs["on_spool"](ctx.config.downloads_dir / "ghost.part")
+        raise TransferError("no", "upload")
+
+    monkeypatch.setattr(organize, "transfer_entry", explode)
+    list(run(ctx, Params(workers=1)))
+
+    assert registry.snapshot() == []

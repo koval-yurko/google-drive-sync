@@ -37,6 +37,8 @@ class ActionContext:
     config: Config
     writer: object | None = None
     """Whatever may mutate Drive. None in a read-only context."""
+    inflight: object | None = None
+    """Where live transfers report themselves. None when nobody is watching."""
 
 
 @dataclass
