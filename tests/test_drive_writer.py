@@ -126,3 +126,68 @@ def test_trash_patches_rather_than_deleting():
     writer_for(handler).trash("f1")
     assert seen["method"] == "PATCH"
     assert seen["body"] == {"trashed": True}
+
+
+from photolib.drive.errors import TransientError
+from tests.fakes.fake_drive import FakeDrive
+
+
+def test_fake_assembles_chunks_into_a_file_with_a_real_md5():
+    import hashlib
+
+    fake = FakeDrive()
+    fake.add_folder("p", "parent")
+    uri = fake.start_session("p", "IMG.HEIC", 8, "image/heic", {"source_crc": "1"})
+    assert fake.send_chunk(uri, b"abcd", 0, 8) is None
+    assert fake.session_offset(uri, 8) == 4
+    file = fake.send_chunk(uri, b"efgh", 4, 8)
+    assert file is not None
+    assert file.md5 == hashlib.md5(b"abcdefgh").hexdigest()
+    assert fake.get_file(file.id).name == "IMG.HEIC"
+
+
+def test_fake_rejects_a_chunk_at_the_wrong_offset():
+    fake = FakeDrive()
+    fake.add_folder("p", "parent")
+    uri = fake.start_session("p", "x", 8, "x/y", {})
+    with pytest.raises(DriveError):
+        fake.send_chunk(uri, b"efgh", 4, 8)      # nothing sent yet; 4 is wrong
+
+
+def test_fake_can_expire_a_session():
+    fake = FakeDrive()
+    fake.add_folder("p", "parent")
+    uri = fake.start_session("p", "x", 4, "x/y", {})
+    fake.expire_session(uri)
+    with pytest.raises(SessionExpiredError):
+        fake.session_offset(uri, 4)
+
+
+def test_fake_can_fail_chunks_transiently():
+    fake = FakeDrive()
+    fake.add_folder("p", "parent")
+    uri = fake.start_session("p", "x", 4, "x/y", {})
+    fake.fail_chunks = 1
+    with pytest.raises(TransientError):
+        fake.send_chunk(uri, b"abcd", 0, 4)
+    assert fake.send_chunk(uri, b"abcd", 0, 4) is not None
+
+
+def test_fake_creates_distinct_folders_for_the_same_name():
+    """Drive really does allow this, and it is how a library gets split in two."""
+    fake = FakeDrive()
+    fake.add_folder("p", "parent")
+    first = fake.create_folder("p", "2023-11")
+    second = fake.create_folder("p", "2023-11")
+    assert first.id != second.id
+    # ensure_folder is what protects against it
+    assert fake.ensure_folder("p", "2023-11").id == first.id
+
+
+def test_fake_trash_hides_the_file():
+    fake = FakeDrive()
+    fake.add_folder("p", "parent")
+    fake.add_file("f1", "x.HEIC", b"x", parent="p")
+    fake.trash("f1")
+    assert fake.trashed == ["f1"]
+    assert fake.list_children("p") == []
