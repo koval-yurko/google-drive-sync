@@ -154,4 +154,16 @@ describe('LibraryPage', () => {
     render(<LibraryPage />)
     expect(await screen.findByText(/no files match/i)).toBeTruthy()
   })
+
+  it('offers bulk tagging once something is selected', async () => {
+    render(<LibraryPage />)
+    await userEvent.click(await screen.findByRole('img', { name: 'IMG_1.HEIC' }))
+    expect(screen.getByRole('button', { name: /^add tag$/i })).toBeTruthy()
+  })
+
+  it('offers no tagging controls with nothing selected', async () => {
+    render(<LibraryPage />)
+    await screen.findByRole('img', { name: 'IMG_1.HEIC' })
+    expect(screen.queryByRole('button', { name: /^add tag$/i })).toBeNull()
+  })
 })

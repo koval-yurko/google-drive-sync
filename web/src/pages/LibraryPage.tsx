@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { getFacets, listLibraryFiles, listLibraryIds, listTags } from '../api/client'
 import type { Facets, LibraryFile, TagWithCount } from '../api/types'
 import { FilterSidebar } from '../components/FilterSidebar'
+import { TagPicker } from '../components/TagPicker'
 import { Thumb } from '../components/Thumb'
 import type { LibraryFilters } from '../lib/filters'
 import { NO_SELECTION, click, clear, isSelected, selectAll } from '../lib/selection'
@@ -96,7 +97,19 @@ export function LibraryPage() {
               Clear selection
             </button>
           )}
-          {/* Task 14 mounts the bulk tag toolbar here. */}
+          <TagPicker
+            tags={tags}
+            driveIds={[...selection.ids]}
+            onApplied={() => {
+              listTags().then(setTags).catch((e) => setError(String(e)))
+              listLibraryFiles(filters, { limit: rows.length || PAGE, offset: 0 })
+                .then((result) => {
+                  setRows(result.rows)
+                  setTotal(result.total)
+                })
+                .catch((e) => setError(String(e)))
+            }}
+          />
         </header>
 
         {error && <p className="error">{error}</p>}
