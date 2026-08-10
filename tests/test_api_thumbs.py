@@ -24,6 +24,7 @@ def client(tmp_path, drive):
         credentials_path=tmp_path / "credentials.json",
         token_path=tmp_path / "token.json",
         thumbnail_cache_dir=tmp_path / "thumbs",
+        downloads_dir=tmp_path / "downloads",
     )
     with TestClient(create_app(config=config, drive=drive)) as test_client:
         yield test_client

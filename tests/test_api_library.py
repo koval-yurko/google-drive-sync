@@ -14,6 +14,7 @@ def client(tmp_path):
         credentials_path=tmp_path / "credentials.json",
         token_path=tmp_path / "token.json",
         thumbnail_cache_dir=tmp_path / "thumbs",
+        downloads_dir=tmp_path / "downloads",
     )
     app = create_app(config=config, drive=FakeDrive())
     with TestClient(app) as test_client:

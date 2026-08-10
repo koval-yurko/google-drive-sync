@@ -31,6 +31,7 @@ def ctx(conn, drive, tmp_path):
         credentials_path=tmp_path / "c.json",
         token_path=tmp_path / "t.json",
         thumbnail_cache_dir=tmp_path / "thumbs",
+        downloads_dir=tmp_path / "downloads",
     )
     return ActionContext(
         conn=conn, drive=drive, settings=SettingsRepo(conn), config=config,

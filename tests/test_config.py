@@ -12,6 +12,7 @@ def test_load_defaults_to_repo_root(tmp_path, monkeypatch):
     assert cfg.credentials_path == tmp_path / "credentials.json"
     assert cfg.token_path == tmp_path / "token.json"
     assert cfg.thumbnail_cache_dir == tmp_path / ".cache" / "thumbnails"
+    assert cfg.downloads_dir == tmp_path / "downloads"
 
 
 def test_load_without_env_uses_package_parent(monkeypatch):
