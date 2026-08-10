@@ -5,8 +5,10 @@ import type { ActionSpec } from './api/types'
 import { Nav } from './components/Nav'
 import { ActionPage } from './pages/ActionPage'
 import { JobsPage } from './pages/JobsPage'
+import { LibraryPage } from './pages/LibraryPage'
 import { ReviewPage } from './pages/ReviewPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { TagsPage } from './pages/TagsPage'
 
 export default function App() {
   const [actions, setActions] = useState<ActionSpec[]>([])
@@ -26,6 +28,8 @@ export default function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/actions/:actionId" element={<ActionPage actions={actions} />} />
           <Route path="/review" element={<ReviewPage />} />
+          <Route path="/library" element={<LibraryPage />} />
+          <Route path="/tags" element={<TagsPage />} />
           <Route path="/jobs" element={<JobsPage />} />
         </Routes>
       </main>

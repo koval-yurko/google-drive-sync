@@ -18,6 +18,11 @@ export function Nav({ actions }: { actions: ActionSpec[] }) {
         ))}
       </section>
       <section>
+        <h2>Browse</h2>
+        <NavLink to="/library">Library</NavLink>
+        <NavLink to="/tags">Tags</NavLink>
+      </section>
+      <section>
         <h2>Activity</h2>
         <NavLink to="/review">Review Plan</NavLink>
         <NavLink to="/jobs">Jobs</NavLink>

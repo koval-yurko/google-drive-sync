@@ -104,7 +104,9 @@ CREATE TABLE IF NOT EXISTS drive_files (
     md5         TEXT,
     size        INTEGER,
     indexed_at  TEXT,
-    trashed_at  TEXT
+    trashed_at  TEXT,
+    mime_type   TEXT,
+    synced_tags TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_drive_files_name ON drive_files(name);
@@ -115,3 +117,21 @@ CREATE TABLE IF NOT EXISTS geocache (
     country  TEXT,
     raw_json TEXT
 );
+
+CREATE TABLE IF NOT EXISTS tags (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    name  TEXT NOT NULL,
+    slug  TEXT NOT NULL UNIQUE,
+    color TEXT NOT NULL DEFAULT '#6b7280'
+);
+
+-- No foreign key to drive_files on purpose: Scan rebuilds that table, and a
+-- cascade would delete every tag with it. Orphans are retained and excluded
+-- from counts instead.
+CREATE TABLE IF NOT EXISTS file_tags (
+    drive_id TEXT NOT NULL,
+    tag_id   INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (drive_id, tag_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id);

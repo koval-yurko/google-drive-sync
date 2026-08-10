@@ -166,3 +166,71 @@ def test_retry_does_not_retry_not_found(monkeypatch):
     with pytest.raises(NotFoundError):
         missing()
     assert attempts["n"] == 1
+
+
+def test_file_fields_request_the_thumbnail_link():
+    from photolib.drive.client import FILE_FIELDS
+    assert "thumbnailLink" in FILE_FIELDS
+
+
+def test_fetch_thumbnail_rewrites_the_size_suffix():
+    """Drive hands back =s220; the grid wants =s400 and the lightbox =s1600."""
+    requested: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/files/f1"):
+            return httpx.Response(
+                200,
+                json={
+                    "id": "f1", "name": "IMG.HEIC", "mimeType": "image/heic",
+                    "thumbnailLink": "https://lh3.example/abc=s220",
+                },
+            )
+        requested.append(str(request.url))
+        return httpx.Response(200, content=b"jpegbytes")
+
+    client = client_with(handler)
+    assert client.fetch_thumbnail("f1", 400) == b"jpegbytes"
+    assert requested == ["https://lh3.example/abc=s400"]
+
+
+def test_fetch_thumbnail_appends_a_size_when_the_link_has_none():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/files/f1"):
+            return httpx.Response(
+                200,
+                json={
+                    "id": "f1", "name": "IMG.HEIC", "mimeType": "image/heic",
+                    "thumbnailLink": "https://lh3.example/abc",
+                },
+            )
+        assert str(request.url) == "https://lh3.example/abc=s400"
+        return httpx.Response(200, content=b"jpegbytes")
+
+    assert client_with(handler).fetch_thumbnail("f1", 400) == b"jpegbytes"
+
+
+def test_fetch_thumbnail_is_none_when_drive_has_not_made_one():
+    """Freshly uploaded files have no thumbnailLink for a few minutes."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"id": "f1", "name": "IMG.HEIC", "mimeType": "image/heic"}
+        )
+
+    assert client_with(handler).fetch_thumbnail("f1", 400) is None
+
+
+def test_app_properties_returns_an_empty_dict_when_there_are_none():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={})
+
+    assert client_with(handler).app_properties("f1") == {}
+
+
+def test_app_properties_returns_what_drive_holds():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params["fields"] == "appProperties"
+        return httpx.Response(200, json={"appProperties": {"t_family": "1"}})
+
+    assert client_with(handler).app_properties("f1") == {"t_family": "1"}

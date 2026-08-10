@@ -4,6 +4,18 @@ import sqlite3
 
 from photolib.db import catalog, migrations
 
+V3_COLUMNS = (
+    ("media", "upload_session_uri"),
+    ("media", "upload_offset"),
+    ("media", "session_started_at"),
+    ("media", "attempts"),
+    ("drive_files", "trashed_at"),
+)
+V4_COLUMNS = (
+    ("drive_files", "mime_type"),
+    ("drive_files", "synced_tags"),
+)
+
 
 def _schema(conn: sqlite3.Connection) -> set[tuple[str, str]]:
     """Every (table, column) pair in the database."""
@@ -21,10 +33,10 @@ def _schema(conn: sqlite3.Connection) -> set[tuple[str, str]]:
     }
 
 
-def test_version_is_three(tmp_path):
+def test_version_is_four(tmp_path):
     conn = catalog.connect(tmp_path / "fresh.db")
-    assert migrations.SCHEMA_VERSION == 3
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert migrations.SCHEMA_VERSION == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
 
 
 def test_media_has_the_upload_session_columns(tmp_path):
@@ -35,17 +47,31 @@ def test_media_has_the_upload_session_columns(tmp_path):
     } <= columns
 
 
+def test_drive_files_carries_mime_type_and_sync_state(tmp_path):
+    conn = catalog.connect(tmp_path / "fresh.db")
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(drive_files)")}
+    assert {"mime_type", "synced_tags"} <= columns
+
+
+def test_tag_tables_exist(tmp_path):
+    conn = catalog.connect(tmp_path / "fresh.db")
+    tags = {row["name"] for row in conn.execute("PRAGMA table_info(tags)")}
+    file_tags = {row["name"] for row in conn.execute("PRAGMA table_info(file_tags)")}
+    assert {"id", "name", "slug", "color"} <= tags
+    assert {"drive_id", "tag_id"} <= file_tags
+
+
 def test_upgrading_a_v2_catalog_matches_a_fresh_one(tmp_path):
     """The bug this guards: 'created new' and 'upgraded' drifting apart."""
     old = tmp_path / "old.db"
     conn = catalog.connect(old)
     conn.execute("INSERT INTO settings (key, value) VALUES ('photos_root', 'x')")
     conn.commit()
-    # Strip the v3 columns and rewind the version: a genuine v2 catalog.
-    for column in ("upload_session_uri", "upload_offset", "session_started_at",
-                   "attempts"):
-        conn.execute(f"ALTER TABLE media DROP COLUMN {column}")
-    conn.execute("ALTER TABLE drive_files DROP COLUMN trashed_at")
+    # Strip everything added after v2 and rewind the version: a genuine v2 catalog.
+    for table, column in V3_COLUMNS + V4_COLUMNS:
+        conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+    conn.execute("DROP TABLE file_tags")
+    conn.execute("DROP TABLE tags")
     conn.execute("PRAGMA user_version = 2")
     conn.commit()
     conn.close()
@@ -54,8 +80,22 @@ def test_upgrading_a_v2_catalog_matches_a_fresh_one(tmp_path):
     fresh = catalog.connect(tmp_path / "fresh.db")
 
     assert _schema(upgraded) == _schema(fresh)
-    assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 4
     assert upgraded.execute("SELECT value FROM settings").fetchone()["value"] == "x"
+
+
+def test_upgrading_keeps_existing_tags(tmp_path):
+    """Migration must never be a data-loss event for hand-made tags."""
+    db = tmp_path / "t.db"
+    conn = catalog.connect(db)
+    conn.execute("INSERT INTO tags (name, slug, color) VALUES ('Family', 'family', '#f00')")
+    conn.execute("INSERT INTO file_tags (drive_id, tag_id) VALUES ('drive-1', 1)")
+    conn.commit()
+    conn.close()
+
+    upgraded = catalog.connect(db)
+    assert upgraded.execute("SELECT slug FROM tags").fetchone()["slug"] == "family"
+    assert upgraded.execute("SELECT COUNT(*) FROM file_tags").fetchone()[0] == 1
 
 
 def test_migrating_twice_is_harmless(tmp_path):
@@ -63,4 +103,4 @@ def test_migrating_twice_is_harmless(tmp_path):
     catalog.connect(db).close()
     conn = catalog.connect(db)
     migrations.migrate(conn)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4

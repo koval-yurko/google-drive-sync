@@ -92,17 +92,35 @@ class ScanRepo:
 
     # ---------- destination index ----------
 
-    def replace_drive_files(self, rows: list[dict]) -> None:
-        """Replace the whole destination index; it is rebuilt on every scan."""
-        self._conn.execute("DELETE FROM drive_files")
+    def upsert_drive_files(self, rows: list[dict]) -> None:
+        """Refresh the destination index without disturbing tags.
+
+        Tags key on `drive_id`, so deleting and re-inserting this table — as
+        an earlier version did — silently threw every tag away. Upserting
+        keeps the row; the sweep afterwards drops only what Drive no longer
+        has. The sweep compares `indexed_at` rather than listing ids, because
+        1,284 ids exceed SQLite's host-parameter limit.
+        """
         stamp = _now()
         self._conn.executemany(
-            "INSERT INTO drive_files (drive_id, name, parent_path, md5, size, indexed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO drive_files "
+            "  (drive_id, name, parent_path, md5, size, mime_type, indexed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(drive_id) DO UPDATE SET "
+            "  name = excluded.name, parent_path = excluded.parent_path, "
+            "  md5 = excluded.md5, size = excluded.size, "
+            "  mime_type = excluded.mime_type, indexed_at = excluded.indexed_at, "
+            "  trashed_at = NULL",
             [
-                (r["drive_id"], r["name"], r["parent_path"], r["md5"], r["size"], stamp)
+                (
+                    r["drive_id"], r["name"], r["parent_path"], r["md5"],
+                    r["size"], r.get("mime_type"), stamp,
+                )
                 for r in rows
             ],
+        )
+        self._conn.execute(
+            "DELETE FROM drive_files WHERE indexed_at IS NOT ?", (stamp,)
         )
         self._conn.commit()
 

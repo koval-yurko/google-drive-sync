@@ -17,6 +17,7 @@ from photolib.drive.client import DriveClient
 from photolib.drive.writer import DriveWriter
 from photolib.jobs.broker import EventBroker
 from photolib.jobs.runner import JobRunner
+from photolib.thumbs import ThumbnailCache
 
 
 def create_app(config: Config | None = None, drive=None) -> FastAPI:
@@ -69,13 +70,17 @@ def create_app(config: Config | None = None, drive=None) -> FastAPI:
     app.state.jobs = jobs
     app.state.broker = broker
     app.state.runner = runner
+    app.state.thumbnails = ThumbnailCache(cfg.thumbnail_cache_dir, drive_client)
 
     from photolib.api import (
         routes_actions,
         routes_drive,
         routes_jobs,
+        routes_library,
         routes_review,
         routes_settings,
+        routes_tags,
+        routes_thumbs,
     )
 
     app.include_router(routes_settings.router, prefix="/api")
@@ -83,4 +88,7 @@ def create_app(config: Config | None = None, drive=None) -> FastAPI:
     app.include_router(routes_actions.router, prefix="/api")
     app.include_router(routes_jobs.router, prefix="/api")
     app.include_router(routes_review.router, prefix="/api")
+    app.include_router(routes_library.router, prefix="/api")
+    app.include_router(routes_tags.router, prefix="/api")
+    app.include_router(routes_thumbs.router, prefix="/api")
     return app

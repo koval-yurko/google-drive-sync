@@ -6,6 +6,8 @@ and resumable uploads are far easier to express directly.
 
 from __future__ import annotations
 
+import re
+
 import httpx
 from pydantic import BaseModel, Field
 
@@ -13,7 +15,13 @@ from photolib.drive.errors import raise_for_response, retry
 
 API_ROOT = "https://www.googleapis.com/drive/v3"
 FOLDER_MIME = "application/vnd.google-apps.folder"
-FILE_FIELDS = "id,name,mimeType,size,md5Checksum,modifiedTime,parents"
+FILE_FIELDS = (
+    "id,name,mimeType,size,md5Checksum,modifiedTime,parents,thumbnailLink"
+)
+
+# Drive's thumbnailLink ends in a size directive: .../abc=s220. Swapping it is
+# how you ask for a different size; there is no query parameter for it.
+_SIZE_SUFFIX = re.compile(r"=s\d+(-c)?$")
 
 
 class DriveFile(BaseModel):
@@ -24,6 +32,7 @@ class DriveFile(BaseModel):
     md5: str | None = Field(default=None, alias="md5Checksum")
     modified_time: str | None = Field(default=None, alias="modifiedTime")
     parents: list[str] = Field(default_factory=list)
+    thumbnail_link: str | None = Field(default=None, alias="thumbnailLink")
 
     model_config = {"populate_by_name": True}
 
@@ -105,3 +114,37 @@ class DriveClient:
         )
         raise_for_response(response)
         return response.content
+
+    def fetch_thumbnail(self, file_id: str, size: int) -> bytes | None:
+        """Drive's own render of a file, or None if it has not made one.
+
+        Chrome cannot display HEIC, and 591 of these files are HEIC, so this
+        is how the Library shows anything at all. A missing thumbnailLink is
+        ordinary — Drive generates them asynchronously after upload — and is
+        reported as None rather than raised.
+        """
+        link = self.get_file(file_id).thumbnail_link
+        if not link:
+            return None
+        if _SIZE_SUFFIX.search(link):
+            link = _SIZE_SUFFIX.sub(f"=s{size}", link)
+        else:
+            link = f"{link}=s{size}"
+        return self._fetch_thumbnail_bytes(link)
+
+    @retry
+    def _fetch_thumbnail_bytes(self, link: str) -> bytes:
+        response = self._http.get(link, headers=self.headers())
+        raise_for_response(response)
+        return response.content
+
+    @retry
+    def app_properties(self, file_id: str) -> dict[str, str]:
+        """The file's private appProperties. `sync_tags` diffs against these."""
+        response = self._http.get(
+            f"{API_ROOT}/files/{file_id}",
+            params={"fields": "appProperties", "supportsAllDrives": "true"},
+            headers=self.headers(),
+        )
+        raise_for_response(response)
+        return response.json().get("appProperties") or {}
