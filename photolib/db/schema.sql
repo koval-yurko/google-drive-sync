@@ -86,7 +86,11 @@ CREATE TABLE IF NOT EXISTS media (
                      CHECK (upload_status IN ('pending', 'done', 'error')),
     drive_file_id    TEXT,
     md5              TEXT,
-    error            TEXT
+    error            TEXT,
+    upload_session_uri TEXT,
+    upload_offset      INTEGER NOT NULL DEFAULT 0,
+    session_started_at TEXT,
+    attempts           INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_media_target ON media(target_folder, target_name);
@@ -99,7 +103,8 @@ CREATE TABLE IF NOT EXISTS drive_files (
     parent_path TEXT NOT NULL,
     md5         TEXT,
     size        INTEGER,
-    indexed_at  TEXT
+    indexed_at  TEXT,
+    trashed_at  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_drive_files_name ON drive_files(name);
