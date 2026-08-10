@@ -1379,7 +1379,9 @@ def test_rerun_is_idempotent(ctx):
     list(run(ctx, Params()))
     list(run(ctx, Params()))
     assert len(MediaRepo(ctx.conn).all_media()) == 1
-    assert ctx.conn.execute("SELECT COUNT(*) FROM sidecars").fetchone()[0] == 1
+    # Both sidecars are stored, including the orphan describing IMG_9.MOV — its
+    # parsed data is kept for diagnosis. Re-running must not duplicate either.
+    assert ctx.conn.execute("SELECT COUNT(*) FROM sidecars").fetchone()[0] == 2
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
