@@ -23,7 +23,7 @@ from typing import Iterator
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.db.media_repo import MediaRepo
 from photolib.db.settings_repo import PHOTOS_ROOT
-from photolib.downloads import run_folder_name, sweep_empty
+from photolib.downloads import InflightRegistry, run_folder_name, sweep_empty
 from photolib.drive.errors import DriveError
 from photolib.transfer import TransferError, transfer_entry
 from photolib.ziparchive.reader import ZipEntry
@@ -148,6 +148,11 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
             f"{stale['bytes'] / 1e9:.2f} GB, in downloads/{stale['dir']}/."
         )
 
+    # A private registry when nobody supplied one, so the reporting below has
+    # no None to step around.
+    inflight = ctx.inflight or InflightRegistry()
+    inflight.open_run(run_dir)
+
     try:
         folders = _prepare_folders(ctx, photos_root.id, rows)
     except DriveError as exc:
@@ -171,17 +176,30 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         """Runs on a worker thread. No database access here."""
         entry = _entry_of(row)
         archive_id = row["archive_drive_id"]
-        return transfer_entry(
-            read_range=lambda s, e: ctx.drive.read_range(archive_id, s, e),
-            entry=entry,
-            writer=ctx.writer,
-            parent_id=folders[row["target_folder"]],
-            name=row["target_name"],
-            properties=_properties(row),
-            spool_dir=run_dir,
-            session_uri=row["upload_session_uri"],
-            on_session=lambda uri: sessions.put((row["entry_id"], uri)),
-        )
+        key = str(row["entry_id"])
+        destination = f"{photos_root.name}/{row['target_folder']}"
+        try:
+            return transfer_entry(
+                read_range=lambda s, e: ctx.drive.read_range(archive_id, s, e),
+                entry=entry,
+                writer=ctx.writer,
+                parent_id=folders[row["target_folder"]],
+                name=row["target_name"],
+                properties=_properties(row),
+                spool_dir=run_dir,
+                session_uri=row["upload_session_uri"],
+                on_session=lambda uri: sessions.put((row["entry_id"], uri)),
+                on_spool=lambda path: inflight.start(
+                    key,
+                    name=row["target_name"],
+                    destination=destination,
+                    expected_size=row["size"],
+                    path=path,
+                ),
+                on_progress=lambda offset: inflight.uploaded(key, offset),
+            )
+        finally:
+            inflight.finish(key)
 
     def drain_sessions() -> None:
         while True:
@@ -222,6 +240,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
             )
 
     drain_sessions()
+    inflight.close_run()
     leftover = [f for f in run_dir.iterdir() if f.is_file()]
     if leftover:
         yield ProgressEvent(

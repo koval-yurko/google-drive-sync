@@ -4,6 +4,7 @@ import re
 
 import pytest
 
+from photolib.actions import organize
 from photolib.actions.base import ActionContext
 from photolib.actions.organize import Params, run
 from photolib.actions.pair_metadata import Params as PairParams
@@ -16,6 +17,8 @@ from photolib.config import Config
 from photolib.db import catalog
 from photolib.db.media_repo import MediaRepo
 from photolib.db.settings_repo import PHOTOS_ROOT, ZIP_SOURCE, FolderRef, SettingsRepo
+from photolib.downloads import InflightRegistry, observe
+from photolib.transfer import TransferError
 from tests.fakes.fake_drive import FakeDrive
 from tests.fixtures.zipbuilder import build_zip
 
@@ -217,3 +220,50 @@ def test_an_unusable_downloads_folder_stops_the_run_before_any_upload(ctx):
 def test_a_single_worker_works_too(ctx):
     list(run(ctx, Params(workers=1)))
     assert len(uploaded_names(ctx)) == 2
+
+
+def test_a_live_transfer_is_visible_while_it_moves(ctx, monkeypatch):
+    """The registry is read from another thread, so read it from this one."""
+    registry = InflightRegistry()
+    ctx.inflight = registry
+    seen: list = []
+
+    original = organize.transfer_entry
+
+    def spy(**kwargs):
+        on_spool = kwargs.pop("on_spool")
+
+        def watch(path):
+            on_spool(path)
+            seen.extend(observe(registry.snapshot()))
+
+        return original(on_spool=watch, **kwargs)
+
+    monkeypatch.setattr(organize, "transfer_entry", spy)
+    list(run(ctx, Params(workers=1)))
+
+    assert {view.name for view in seen} == {"IMG_1.HEIC", "IMG_2.MOV"}
+    assert {view.destination for view in seen} == {"Photos/2023-11", "Photos/2019-01"}
+    assert all(view.total > 0 for view in seen)
+
+
+def test_the_registry_is_empty_when_the_run_ends(ctx):
+    registry = InflightRegistry()
+    ctx.inflight = registry
+    list(run(ctx, Params()))
+    assert registry.snapshot() == []
+    assert registry.run_dir is None
+
+
+def test_a_failed_transfer_leaves_no_ghost(ctx, monkeypatch):
+    registry = InflightRegistry()
+    ctx.inflight = registry
+
+    def explode(**kwargs):
+        kwargs["on_spool"](ctx.config.downloads_dir / "ghost.part")
+        raise TransferError("no", "upload")
+
+    monkeypatch.setattr(organize, "transfer_entry", explode)
+    list(run(ctx, Params(workers=1)))
+
+    assert registry.snapshot() == []
