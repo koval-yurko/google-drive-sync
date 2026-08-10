@@ -84,3 +84,9 @@ export const listReviewMedia = (opts: {
     `/api/review/media?${params.toString()}`,
   )
 }
+
+export const retryUpload = (entryId: number) =>
+  request<{ entry_id: number; upload_status: string }>(
+    `/api/review/retry/${entryId}`,
+    { method: 'POST' },
+  )

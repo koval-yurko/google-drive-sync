@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getReviewSummary, listReviewMedia } from '../api/client'
+import { getReviewSummary, listReviewMedia, retryUpload } from '../api/client'
 import type { ReviewMedia, ReviewSummary } from '../api/types'
 
 const TILES: Array<{ key: keyof ReviewSummary; label: string }> = [
@@ -7,6 +7,8 @@ const TILES: Array<{ key: keyof ReviewSummary; label: string }> = [
   { key: 'planned', label: 'with a destination' },
   { key: 'duplicates', label: 'already in the destination' },
   { key: 'with_place', label: 'with a place' },
+  { key: 'uploaded', label: 'uploaded' },
+  { key: 'errors', label: 'failed' },
 ]
 
 function when(row: ReviewMedia): string {
@@ -20,6 +22,7 @@ export function ReviewPage() {
   const [total, setTotal] = useState(0)
   const [duplicatesOnly, setDuplicatesOnly] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [reloads, setReloads] = useState(0)
 
   useEffect(() => {
     getReviewSummary().then(setSummary).catch((e) => setError(String(e)))
@@ -32,7 +35,16 @@ export function ReviewPage() {
         setTotal(result.total)
       })
       .catch((e) => setError(String(e)))
-  }, [duplicatesOnly])
+  }, [duplicatesOnly, reloads])
+
+  async function onRetry(entryId: number) {
+    try {
+      await retryUpload(entryId)
+      setReloads((n) => n + 1)
+    } catch (e) {
+      setError(String(e))
+    }
+  }
 
   return (
     <>
@@ -83,6 +95,7 @@ export function ReviewPage() {
             <th>Source</th>
             <th>Place</th>
             <th>Already there</th>
+            <th>Status</th>
           </tr>
         </thead>
         <tbody>
@@ -100,6 +113,18 @@ export function ReviewPage() {
               <td>{row.place ?? '—'}</td>
               <td className={row.duplicate_of ? 'warn' : undefined}>
                 {row.duplicate_of ?? '—'}
+              </td>
+              <td className={row.upload_status === 'error' ? 'error' : undefined}>
+                {row.upload_status}
+                {row.error ? ` — ${row.error}` : ''}
+                {row.upload_status === 'error' && (
+                  <>
+                    {' '}
+                    <button type="button" onClick={() => onRetry(row.entry_id)}>
+                      Retry
+                    </button>
+                  </>
+                )}
               </td>
             </tr>
           ))}

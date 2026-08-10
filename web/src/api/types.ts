@@ -52,12 +52,15 @@ export interface ReviewSummary {
   with_place: number
   with_sidecar: number
   pending: number
+  uploaded: number
+  errors: number
   archives: number
   entries: number
   drive_files: number
 }
 
 export interface ReviewMedia {
+  entry_id: number
   name: string
   path: string
   archive_name: string
@@ -70,5 +73,7 @@ export interface ReviewMedia {
   duplicate_of: string | null
   duplicate_reason: string | null
   upload_status: string
+  error: string | null
+  drive_file_id: string | null
   size: number
 }
