@@ -17,7 +17,6 @@ import hashlib
 import mimetypes
 import os
 import struct
-import tempfile
 import time
 import zlib
 from dataclasses import dataclass
@@ -31,6 +30,7 @@ from photolib.ziparchive.reader import DEFLATED, ZipEntry
 MAX_CHUNK_ATTEMPTS = 6
 BASE_DELAY = 0.5
 MAX_DELAY = 30.0
+MAX_NAME_ATTEMPTS = 1000
 
 # mimetypes reads the platform's mime database, which may or may not carry the
 # formats an iPhone produces. Pin them so the answer does not depend on the
@@ -167,6 +167,26 @@ def upload_file(
                 on_progress(offset)
 
 
+def claim_part_path(spool_dir: Path, name: str) -> Path:
+    """Create an empty `.part` file named for `name`, and return its path.
+
+    O_EXCL makes the claim atomic. Two workers moving files that share a name
+    into different months would otherwise pick the same path and corrupt each
+    other's bytes; check-then-create would only narrow the window, not close it.
+    """
+    safe = name.replace("/", "_").replace(os.sep, "_")
+    for attempt in range(1, MAX_NAME_ATTEMPTS + 1):
+        suffix = ".part" if attempt == 1 else f".{attempt}.part"
+        candidate = spool_dir / f"{safe}{suffix}"
+        try:
+            handle = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            continue
+        os.close(handle)
+        return candidate
+    raise TransferError(f"no free spool name for {name!r}", "read")
+
+
 def transfer_entry(
     *,
     read_range: RangeReader,
@@ -179,13 +199,14 @@ def transfer_entry(
     session_uri: str | None = None,
     mime_type: str | None = None,
     on_session: Callable[[str], None] | None = None,
+    on_spool: Callable[[Path], None] | None = None,
     on_progress: Callable[[int], None] | None = None,
 ) -> TransferResult:
     """Move one entry into `parent_id` as `name`. Raises TransferError."""
     spool_dir.mkdir(parents=True, exist_ok=True)
-    handle, raw_path = tempfile.mkstemp(dir=spool_dir, suffix=".part")
-    os.close(handle)
-    spooled = Path(raw_path)
+    spooled = claim_part_path(spool_dir, name)
+    if on_spool:
+        on_spool(spooled)
 
     try:
         spool_entry(read_range, entry, spooled)
