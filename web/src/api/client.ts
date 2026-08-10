@@ -1,5 +1,6 @@
 import type {
   ActionSpec,
+  Downloads,
   DriveFolder,
   Facets,
   FolderRef,
@@ -49,6 +50,8 @@ export const runAction = (id: string, params: Record<string, unknown>) =>
 export const listJobs = () => request<Job[]>('/api/jobs')
 
 export const getJob = (id: string) => request<Job>(`/api/jobs/${id}`)
+
+export const getDownloads = () => request<Downloads>('/api/downloads')
 
 export const getJobEvents = (id: string, after = 0) =>
   request<JobEvent[]>(`/api/jobs/${id}/events?after=${after}`)

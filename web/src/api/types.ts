@@ -122,3 +122,23 @@ export interface Facets {
   types: Facet[]
   duplicates: number
 }
+
+export interface InflightFile {
+  name: string
+  phase: 'downloading' | 'uploading'
+  bytes: number
+  total: number
+  destination: string
+}
+
+export interface StaleRun {
+  dir: string
+  files: number
+  bytes: number
+}
+
+export interface Downloads {
+  run_dir: string | null
+  files: InflightFile[]
+  stale_runs: StaleRun[]
+}
