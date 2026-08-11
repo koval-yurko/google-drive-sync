@@ -52,7 +52,13 @@ def raise_for_response(response: httpx.Response) -> None:
 
 
 def retry(fn: Callable[..., T]) -> Callable[..., T]:
-    """Retry rate-limit and transient failures with exponential backoff."""
+    """Retry rate-limit, transient, and network failures with backoff.
+
+    Transport-level errors (timeouts, resets) never produce a response, so
+    raise_for_response cannot classify them; they are retried like
+    TransientError and wrapped in one on exhaustion, keeping every caller's
+    `except DriveError` the single boundary for Drive failures.
+    """
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs) -> T:
@@ -62,10 +68,12 @@ def retry(fn: Callable[..., T]) -> Callable[..., T]:
                 return fn(*args, **kwargs)
             except (RateLimitedError, TransientError) as exc:
                 last = exc
-                if attempt == MAX_ATTEMPTS - 1:
-                    break
-                delay = min(BASE_DELAY * (2**attempt), MAX_DELAY)
-                time.sleep(delay + random.uniform(0, delay * 0.25))
+            except httpx.TransportError as exc:
+                last = TransientError(f"{type(exc).__name__}: {exc}")
+            if attempt == MAX_ATTEMPTS - 1:
+                break
+            delay = min(BASE_DELAY * (2**attempt), MAX_DELAY)
+            time.sleep(delay + random.uniform(0, delay * 0.25))
         assert last is not None
         raise last
 

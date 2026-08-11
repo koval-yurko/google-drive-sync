@@ -2,7 +2,14 @@ import httpx
 import pytest
 
 from photolib.drive.client import DriveClient, DriveFile
-from photolib.drive.errors import DriveError, MAX_ATTEMPTS, NotFoundError, RateLimitedError, retry
+from photolib.drive.errors import (
+    DriveError,
+    MAX_ATTEMPTS,
+    NotFoundError,
+    RateLimitedError,
+    TransientError,
+    retry,
+)
 
 
 class StubTokens:
@@ -151,6 +158,35 @@ def test_retry_gives_up_and_reraises(monkeypatch):
 
     with pytest.raises(RateLimitedError):
         always_busy()
+    assert attempts["n"] == MAX_ATTEMPTS
+
+
+def test_retry_recovers_after_a_network_timeout(monkeypatch):
+    monkeypatch.setattr("photolib.drive.errors.time.sleep", lambda _: None)
+    attempts = {"n": 0}
+
+    @retry
+    def flaky():
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise httpx.ReadTimeout("The read operation timed out")
+        return "ok"
+
+    assert flaky() == "ok"
+    assert attempts["n"] == 3
+
+
+def test_an_exhausted_network_failure_surfaces_as_a_drive_error(monkeypatch):
+    monkeypatch.setattr("photolib.drive.errors.time.sleep", lambda _: None)
+    attempts = {"n": 0}
+
+    @retry
+    def unreachable():
+        attempts["n"] += 1
+        raise httpx.ConnectError("no route to host")
+
+    with pytest.raises(TransientError):
+        unreachable()
     assert attempts["n"] == MAX_ATTEMPTS
 
 

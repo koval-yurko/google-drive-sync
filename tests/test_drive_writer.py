@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from photolib.drive.client import DriveClient
-from photolib.drive.errors import DriveError
+from photolib.drive.errors import DriveError, TransientError
 from photolib.drive.writer import DriveWriter, SessionExpiredError
 
 
@@ -113,6 +113,14 @@ def test_send_chunk_returns_the_file_when_complete():
     file = writer_for(handler).send_chunk("https://upload/s", b"efgh", 4, 8)
     assert file is not None
     assert (file.id, file.md5) == ("f1", "deadbeef")
+
+
+def test_a_network_failure_during_a_chunk_is_a_transient_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("The read operation timed out")
+
+    with pytest.raises(TransientError):
+        writer_for(handler).send_chunk("https://upload/s", b"abcd", 0, 4)
 
 
 def test_trash_patches_rather_than_deleting():

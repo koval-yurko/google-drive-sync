@@ -22,7 +22,12 @@ from photolib.drive.client import (
     DriveClient,
     DriveFile,
 )
-from photolib.drive.errors import DriveError, raise_for_response, retry
+from photolib.drive.errors import (
+    DriveError,
+    TransientError,
+    raise_for_response,
+    retry,
+)
 
 UPLOAD_ROOT = "https://www.googleapis.com/upload/drive/v3/files"
 
@@ -212,17 +217,22 @@ class DriveWriter:
 
         Deliberately NOT decorated with @retry: a failed chunk may have been
         partially committed, so the caller must re-ask `session_offset` before
-        sending anything else.
+        sending anything else. A network failure is still typed as
+        TransientError so that recovery path engages instead of the raw
+        httpx error escaping the DriveError boundary.
         """
         end = start + len(chunk) - 1
-        response = self._http.put(
-            session_uri,
-            headers=self._headers({
-                "Content-Range": f"bytes {start}-{end}/{total}",
-                "Content-Type": "application/octet-stream",
-            }),
-            content=chunk,
-        )
+        try:
+            response = self._http.put(
+                session_uri,
+                headers=self._headers({
+                    "Content-Range": f"bytes {start}-{end}/{total}",
+                    "Content-Type": "application/octet-stream",
+                }),
+                content=chunk,
+            )
+        except httpx.TransportError as exc:
+            raise TransientError(f"{type(exc).__name__}: {exc}") from exc
         if response.status_code in (200, 201):
             return DriveFile.model_validate(response.json())
         if response.status_code == 308:
