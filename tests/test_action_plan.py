@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -110,6 +111,27 @@ def test_undated_media_land_in_the_unknown_folder(ctx):
     )
     list(run(ctx, Params()))
     assert by_name(ctx)["IMG_9.MOV"]["target_folder"] == "unknown-date"
+
+
+def test_a_legacy_drive_files_capture_hint_extends_the_bucket(ctx):
+    # A live Drive file no media row accounts for (never scanned from an
+    # archive), but Drive itself dates it — via EXIF or a file timestamp.
+    # unaccounted_drive_months must fold that month into the histogram, so
+    # the packed bucket grows to cover it too.
+    ScanRepo(ctx.conn).record_drive_file(
+        drive_id="legacy1",
+        name="legacy.jpg",
+        parent_path="some_old_folder",
+        md5="deadbeef",
+        size=42,
+        mime_type="image/jpeg",
+        capture_hint=int(datetime(2024, 5, 1, tzinfo=timezone.utc).timestamp()),
+    )
+    list(run(ctx, Params()))
+    # Without the legacy file the bucket would be "2019-01 - 2023-11" (see
+    # test_target_folder_is_the_bucket_holding_the_capture_month); the extra
+    # 2024-05 month pushes the upper edge out to cover it.
+    assert by_name(ctx)["IMG_1.HEIC"]["target_folder"] == "2019-01 - 2024-05"
 
 
 def test_duplicates_are_recorded_but_still_pending(ctx):

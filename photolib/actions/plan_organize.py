@@ -88,8 +88,14 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         )
 
     # Pass 1: resolve every capture, so the packing sees every file's month.
+    total = len(rows)
     resolved = []
-    for row in rows:
+    for index, row in enumerate(rows, start=1):
+        if index % 100 == 0 or index == total:
+            yield ProgressEvent(
+                f"Resolved {index} of {total}.", progress=index / total / 2
+            )
+
         sidecar = None
         if row["sidecar_id"]:
             sidecar = ctx.conn.execute(
@@ -113,12 +119,13 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     fmap = buckets.folder_map(counts)
 
     taken: set[tuple[str, str]] = set()
-    total = len(resolved)
     duplicates = located = unknown_dates = 0
 
     for index, (row, sidecar, capture, source) in enumerate(resolved, start=1):
         if index % 100 == 0 or index == total:
-            yield ProgressEvent(f"Planned {index} of {total}.", progress=index / total)
+            yield ProgressEvent(
+                f"Planned {index} of {total}.", progress=0.5 + index / total / 2
+            )
 
         if source == "unknown":
             unknown_dates += 1
