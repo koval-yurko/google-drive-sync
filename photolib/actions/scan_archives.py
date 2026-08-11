@@ -28,26 +28,22 @@ class Params(ActionParams):
 
 
 def _index_destination(ctx: ActionContext, folder_id: str) -> int:
-    """Walk the destination two levels deep and return how many files were seen."""
+    """Walk the destination at any depth and return how many files were seen."""
     rows: list[dict] = []
-    for child in ctx.drive.list_children(folder_id):
-        if not child.is_folder:
-            rows.append(
-                {
-                    "drive_id": child.id, "name": child.name, "parent_path": "",
-                    "md5": child.md5, "size": child.size,
-                    "mime_type": child.mime_type,
-                }
-            )
-            continue
-        for grandchild in ctx.drive.list_children(child.id):
-            if grandchild.is_folder:
+    stack: list[tuple[str, str]] = [(folder_id, "")]
+    while stack:
+        current, path = stack.pop()
+        for child in ctx.drive.list_children(current):
+            if child.is_folder:
+                stack.append(
+                    (child.id, f"{path}/{child.name}" if path else child.name)
+                )
                 continue
             rows.append(
                 {
-                    "drive_id": grandchild.id, "name": grandchild.name,
-                    "parent_path": child.name, "md5": grandchild.md5,
-                    "size": grandchild.size, "mime_type": grandchild.mime_type,
+                    "drive_id": child.id, "name": child.name,
+                    "parent_path": path, "md5": child.md5,
+                    "size": child.size, "mime_type": child.mime_type,
                 }
             )
     ScanRepo(ctx.conn).upsert_drive_files(rows)
@@ -81,12 +77,15 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     )
     if not zips:
         yield ProgressEvent(
-            f"No archives found in '{zip_source.name}'.", progress=1.0, level="warn"
+            f"No archives found in '{zip_source.name}' — the catalog already "
+            "built from them survives. Refreshing the destination index only.",
+            progress=0.0,
+            level="warn",
         )
-        return
+    else:
+        yield ProgressEvent(f"Found {len(zips)} archive(s).", progress=0.0)
 
     total = len(zips) + 1
-    yield ProgressEvent(f"Found {len(zips)} archive(s).", progress=0.0)
 
     for index, archive in enumerate(zips, start=1):
         progress = index / total

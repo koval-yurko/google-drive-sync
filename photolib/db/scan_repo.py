@@ -153,8 +153,11 @@ class ScanRepo:
         self._conn.commit()
 
     def drive_file_names(self) -> dict[str, list[sqlite3.Row]]:
+        """Live files only: a copy sitting in Drive's trash duplicates nothing."""
         grouped: dict[str, list[sqlite3.Row]] = defaultdict(list)
-        for row in self._conn.execute("SELECT * FROM drive_files"):
+        for row in self._conn.execute(
+            "SELECT * FROM drive_files WHERE trashed_at IS NULL"
+        ):
             grouped[row["name"]].append(row)
         return grouped
 

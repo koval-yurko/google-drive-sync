@@ -132,6 +132,8 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
 
         duplicate_of = duplicate_reason = None
         for candidate in existing.get(row["name"], []):
+            if candidate["drive_id"] == row["drive_file_id"]:
+                continue  # this file's own verified upload, not a duplicate
             if candidate["size"] == row["entry_size"]:
                 duplicate_of = candidate["parent_path"]
                 duplicate_reason = "name and size match an existing file"

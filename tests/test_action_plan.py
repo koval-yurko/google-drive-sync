@@ -11,6 +11,7 @@ from photolib.actions.scan_archives import run as scan
 from photolib.config import Config
 from photolib.db import catalog
 from photolib.db.media_repo import MediaRepo
+from photolib.db.scan_repo import ScanRepo
 from photolib.db.settings_repo import PHOTOS_ROOT, ZIP_SOURCE, FolderRef, SettingsRepo
 from tests.fakes.fake_drive import FakeDrive
 from tests.fixtures.zipbuilder import build_zip
@@ -96,6 +97,27 @@ def test_duplicates_are_recorded_but_still_pending(ctx):
     assert row["duplicate_of"] == "back_2024_01"
     assert "name" in row["duplicate_reason"]
     assert row["upload_status"] == "pending"      # never withheld
+
+
+def test_trashed_copies_no_longer_count_as_duplicates(ctx):
+    ctx.conn.execute(
+        "UPDATE drive_files SET trashed_at = '2026-08-11T00:00:00+00:00' "
+        "WHERE drive_id = 'd1'"
+    )
+    ctx.conn.commit()
+    list(run(ctx, Params()))
+    assert by_name(ctx)["IMG_1.HEIC"]["duplicate_of"] is None
+
+
+def test_a_file_is_not_a_duplicate_of_its_own_upload(ctx):
+    row = by_name(ctx)["IMG_2.MOV"]
+    MediaRepo(ctx.conn).mark_uploaded(row["entry_id"], "up9", "beef")
+    ScanRepo(ctx.conn).record_drive_file(
+        drive_id="up9", name="IMG_2.MOV", parent_path="2019-01",
+        md5="beef", size=3, mime_type="video/quicktime",
+    )
+    list(run(ctx, Params()))
+    assert by_name(ctx)["IMG_2.MOV"]["duplicate_of"] is None
 
 
 def test_no_media_is_ever_marked_skipped(ctx):
