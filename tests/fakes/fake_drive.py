@@ -164,7 +164,9 @@ class FakeDrive:
         if file_id not in self._files:
             raise NotFoundError(f"no such file: {file_id}")
         file = self._files[file_id]
-        parents = [p for p in file.parents if p != remove_parent] + [add_parent]
+        parents = [p for p in file.parents if p != remove_parent]
+        if add_parent not in parents:
+            parents.append(add_parent)
         updates: dict = {"parents": parents}
         if name is not None:
             updates["name"] = name

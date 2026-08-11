@@ -249,3 +249,20 @@ def test_move_without_a_rename_sends_no_name():
         properties={"place": None},
     )
     assert seen["body"] == {"appProperties": {"place": None}}
+
+
+def test_fake_move_does_not_duplicate_parent_on_retry():
+    """Ensure fake's move matches real Drive: parents is a set, no duplicates on retry."""
+    fake = FakeDrive()
+    fake.add_folder("parent1", "Parent 1")
+    fake.add_folder("parent2", "Parent 2")
+    fake.add_file("f1", "file.txt", b"content", parent="parent1")
+
+    # Move file from parent1 to parent2
+    fake.move("f1", add_parent="parent2", remove_parent="parent1")
+    assert fake.get_file("f1").parents == ["parent2"]
+
+    # Retry the same move: add_parent is already a parent
+    fake.move("f1", add_parent="parent2", remove_parent="parent1")
+    # Should still have exactly one instance of parent2, not a duplicate
+    assert fake.get_file("f1").parents == ["parent2"]
