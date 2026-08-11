@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-import threading
 
 from pydantic import BaseModel
 
@@ -21,13 +20,17 @@ class FolderRef(BaseModel):
 class SettingsRepo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        self._lock = threading.Lock()
+        # Shared with every other repo over this connection (see
+        # catalog.LockedConnection): a per-instance lock cannot provide
+        # mutual exclusion for a connection used by multiple repo classes.
+        self._lock = conn.lock
 
     def get(self, key: str, default: str | None = None) -> str | None:
-        row = self._conn.execute(
-            "SELECT value FROM settings WHERE key = ?", (key,)
-        ).fetchone()
-        return row["value"] if row else default
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT value FROM settings WHERE key = ?", (key,)
+            ).fetchone()
+            return row["value"] if row else default
 
     def set(self, key: str, value: str) -> None:
         with self._lock:
@@ -39,10 +42,11 @@ class SettingsRepo:
             self._conn.commit()
 
     def all(self) -> dict[str, str]:
-        return {
-            row["key"]: row["value"]
-            for row in self._conn.execute("SELECT key, value FROM settings")
-        }
+        with self._lock:
+            return {
+                row["key"]: row["value"]
+                for row in self._conn.execute("SELECT key, value FROM settings")
+            }
 
     def get_folder(self, key: str) -> FolderRef | None:
         raw = self.get(key)

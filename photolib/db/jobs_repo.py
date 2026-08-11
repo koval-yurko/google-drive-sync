@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -46,10 +45,13 @@ def _to_job(row: sqlite3.Row) -> Job:
 class JobsRepo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
-        # Reentrant: create() calls self.get() while already holding the lock,
-        # and get()/list()/events() must also hold it (see below) so that reads
+        # Shared with every other repo over this connection (see
+        # catalog.LockedConnection): a per-instance lock cannot provide
+        # mutual exclusion for a connection used by multiple repo classes.
+        # Reentrant because create() calls self.get() while already holding
+        # it, and get()/list()/events() must also hold it so that reads
         # never execute concurrently with a write on the shared connection.
-        self._lock = threading.RLock()
+        self._lock = conn.lock
 
     def create(self, action: str, params: dict) -> Job:
         with self._lock:
