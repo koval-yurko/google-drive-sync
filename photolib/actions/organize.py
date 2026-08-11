@@ -32,7 +32,7 @@ from photolib.ziparchive.reader import ZipEntry
 ID = "organize"
 TITLE = "Organize Photos"
 DESCRIPTION = (
-    "Upload every planned file into its destination month folder, verifying "
+    "Upload every planned file into its destination bucket folder, verifying "
     "each one against its CRC32 before upload and Drive's MD5 after. Safe to "
     "re-run: finished files are skipped and interrupted ones resume."
 )
@@ -76,7 +76,7 @@ def _properties(row) -> dict[str, str]:
 
 
 def _prepare_folders(ctx: ActionContext, root_id: str, rows) -> dict[str, str]:
-    """Create every destination month folder up front, sequentially.
+    """Create every destination bucket folder up front, sequentially.
 
     Drive permits two folders with the same name in the same parent, so a
     concurrent ensure_folder would not fail loudly — it would quietly split a

@@ -14,7 +14,7 @@ import os
 from datetime import datetime, timezone
 from typing import Iterator
 
-from photolib import places, takeout
+from photolib import buckets, places, takeout
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.db.media_repo import MediaRepo
 from photolib.db.scan_repo import ScanRepo
@@ -55,12 +55,6 @@ def resolve_capture(row, sidecar, archive_modified: str | None) -> tuple[int | N
     return None, "unknown"
 
 
-def _month(capture: int | None) -> str:
-    if capture is None:
-        return "unknown-date"
-    return datetime.fromtimestamp(capture, tz=timezone.utc).strftime("%Y-%m")
-
-
 def _disambiguate(name: str, crc: int) -> str:
     root, ext = os.path.splitext(name)
     return f"{root}~{crc & 0xFFFFFF:06x}{ext}"
@@ -93,30 +87,44 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
             level="warn",
         )
 
-    taken: set[tuple[str, str]] = set()
-    total = len(rows)
-    duplicates = located = unknown_dates = 0
-
-    for index, row in enumerate(rows, start=1):
-        if index % 100 == 0 or index == total:
-            yield ProgressEvent(f"Planned {index} of {total}.", progress=index / total)
-
+    # Pass 1: resolve every capture, so the packing sees every file's month.
+    resolved = []
+    for row in rows:
         sidecar = None
         if row["sidecar_id"]:
             sidecar = ctx.conn.execute(
                 "SELECT * FROM sidecars WHERE id = ?", (row["sidecar_id"],)
             ).fetchone()
-
         archive_modified = ctx.conn.execute(
             "SELECT modified_time FROM archives WHERE drive_id = ?",
             (row["archive_drive_id"],),
         ).fetchone()["modified_time"]
-
         capture, source = resolve_capture(row, sidecar, archive_modified)
+        resolved.append((row, sidecar, capture, source))
+
+    # The histogram covers what the library will hold: these rows, plus the
+    # legacy Drive files no media row accounts for.
+    counts = buckets.unaccounted_drive_months(ctx.conn)
+    counts.update(
+        month
+        for _, _, capture, _ in resolved
+        if (month := buckets.month_of(capture)) is not None
+    )
+    fmap = buckets.folder_map(counts)
+
+    taken: set[tuple[str, str]] = set()
+    total = len(resolved)
+    duplicates = located = unknown_dates = 0
+
+    for index, (row, sidecar, capture, source) in enumerate(resolved, start=1):
+        if index % 100 == 0 or index == total:
+            yield ProgressEvent(f"Planned {index} of {total}.", progress=index / total)
+
         if source == "unknown":
             unknown_dates += 1
 
-        folder = _month(capture)
+        month = buckets.month_of(capture)
+        folder = fmap.get(month, month) if month else buckets.UNKNOWN_FOLDER
         name = row["name"]
         if (folder, name) in taken:
             name = _disambiguate(name, row["crc32"])

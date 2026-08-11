@@ -79,16 +79,37 @@ def test_resolve_capture_gives_up_cleanly():
     assert (when, source) == (None, "unknown")
 
 
-def test_target_folder_is_the_capture_month(ctx):
+def test_target_folder_is_the_bucket_holding_the_capture_month(ctx):
     list(run(ctx, Params()))
-    assert by_name(ctx)["IMG_1.HEIC"]["target_folder"] == "2023-11"
+    assert by_name(ctx)["IMG_1.HEIC"]["target_folder"] == "2019-01 - 2023-11"
 
 
 def test_year_folder_fallback_is_recorded(ctx):
     list(run(ctx, Params()))
     row = by_name(ctx)["IMG_2.MOV"]
     assert row["capture_source"] == "year_folder"
-    assert row["target_folder"] == "2019-01"
+    assert row["target_folder"] == "2019-01 - 2023-11"
+
+
+def test_undated_media_land_in_the_unknown_folder(ctx):
+    conn = ctx.conn
+    conn.execute(
+        "INSERT INTO archives (drive_id, name, size) VALUES ('z9', 'extra.zip', 1)"
+    )
+    # No year in the path, no sidecar, no archive mtime: nothing dates it.
+    conn.execute(
+        "INSERT INTO entries (archive_id, path, name, crc32, size, compressed_size,"
+        " method, local_header_offset, kind) VALUES "
+        "((SELECT id FROM archives WHERE drive_id='z9'),"
+        " 'Takeout/Google Photos/Album/IMG_9.MOV','IMG_9.MOV',"
+        " 998,10,5,8,0,'media')"
+    )
+    conn.commit()
+    MediaRepo(conn).upsert_media(
+        conn.execute("SELECT id FROM entries WHERE crc32 = 998").fetchone()["id"]
+    )
+    list(run(ctx, Params()))
+    assert by_name(ctx)["IMG_9.MOV"]["target_folder"] == "unknown-date"
 
 
 def test_duplicates_are_recorded_but_still_pending(ctx):
