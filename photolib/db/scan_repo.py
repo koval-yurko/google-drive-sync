@@ -104,17 +104,19 @@ class ScanRepo:
         stamp = _now()
         self._conn.executemany(
             "INSERT INTO drive_files "
-            "  (drive_id, name, parent_path, md5, size, mime_type, indexed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "  (drive_id, name, parent_path, md5, size, mime_type, capture_hint, "
+            "   indexed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(drive_id) DO UPDATE SET "
             "  name = excluded.name, parent_path = excluded.parent_path, "
             "  md5 = excluded.md5, size = excluded.size, "
-            "  mime_type = excluded.mime_type, indexed_at = excluded.indexed_at, "
+            "  mime_type = excluded.mime_type, capture_hint = excluded.capture_hint, "
+            "  indexed_at = excluded.indexed_at, "
             "  trashed_at = NULL",
             [
                 (
                     r["drive_id"], r["name"], r["parent_path"], r["md5"],
-                    r["size"], r.get("mime_type"), stamp,
+                    r["size"], r.get("mime_type"), r.get("capture_hint"), stamp,
                 )
                 for r in rows
             ],
@@ -133,6 +135,7 @@ class ScanRepo:
         md5: str,
         size: int,
         mime_type: str,
+        capture_hint: int | None = None,
     ) -> None:
         """One verified upload, straight from Organize.
 
@@ -141,14 +144,16 @@ class ScanRepo:
         """
         self._conn.execute(
             "INSERT INTO drive_files "
-            "  (drive_id, name, parent_path, md5, size, mime_type, indexed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "  (drive_id, name, parent_path, md5, size, mime_type, capture_hint, "
+            "   indexed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(drive_id) DO UPDATE SET "
             "  name = excluded.name, parent_path = excluded.parent_path, "
             "  md5 = excluded.md5, size = excluded.size, "
-            "  mime_type = excluded.mime_type, indexed_at = excluded.indexed_at, "
+            "  mime_type = excluded.mime_type, capture_hint = excluded.capture_hint, "
+            "  indexed_at = excluded.indexed_at, "
             "  trashed_at = NULL",
-            (drive_id, name, parent_path, md5, size, mime_type, _now()),
+            (drive_id, name, parent_path, md5, size, mime_type, capture_hint, _now()),
         )
         self._conn.commit()
 

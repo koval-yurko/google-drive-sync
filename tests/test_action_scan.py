@@ -92,3 +92,15 @@ def test_run_is_a_generator():
     import inspect
 
     assert inspect.isgeneratorfunction(run)
+
+
+def test_scan_records_a_capture_hint_for_destination_files(ctx):
+    ctx.drive.add_file(
+        "hinted", "IMG_7.HEIC", b"x", parent="photos",
+        mime_type="image/heic", modified_time="2024-01-13T10:00:00Z",
+    )
+    list(run(ctx, Params()))
+    row = ctx.conn.execute(
+        "SELECT capture_hint FROM drive_files WHERE drive_id = 'hinted'"
+    ).fetchone()
+    assert row["capture_hint"] == 1705140000

@@ -57,10 +57,14 @@ class FakeDrive:
         content: bytes,
         parent: str,
         mime_type: str = "application/octet-stream",
+        modified_time: str | None = None,
+        image_time: str | None = None,
     ) -> DriveFile:
         file = DriveFile(
             id=id, name=name, mimeType=mime_type, size=len(content),
             md5Checksum=hashlib.md5(content).hexdigest(), parents=[parent],
+            modifiedTime=modified_time,
+            imageMediaMetadata={"time": image_time} if image_time else None,
         )
         self._files[id] = file
         self._content[id] = content

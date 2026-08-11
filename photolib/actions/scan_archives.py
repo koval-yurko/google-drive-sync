@@ -44,6 +44,7 @@ def _index_destination(ctx: ActionContext, folder_id: str) -> int:
                     "drive_id": child.id, "name": child.name,
                     "parent_path": path, "md5": child.md5,
                     "size": child.size, "mime_type": child.mime_type,
+                    "capture_hint": child.capture_hint(),
                 }
             )
     ScanRepo(ctx.conn).upsert_drive_files(rows)
