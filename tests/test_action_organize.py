@@ -95,6 +95,18 @@ def test_the_catalog_records_the_drive_id_and_md5(ctx):
     assert rows["IMG_1.HEIC"]["md5"] == hashlib.md5(HEIC).hexdigest()
 
 
+def test_uploads_land_in_the_library_index_without_a_rescan(ctx):
+    list(run(ctx, Params()))
+    rows = {
+        r["name"]: r
+        for r in ctx.conn.execute("SELECT * FROM drive_files")
+    }
+    assert rows["IMG_1.HEIC"]["parent_path"] == "2023-11"
+    assert rows["IMG_1.HEIC"]["md5"] == hashlib.md5(HEIC).hexdigest()
+    assert rows["IMG_1.HEIC"]["mime_type"] == "image/heic"
+    assert rows["IMG_2.MOV"]["mime_type"] == "video/quicktime"
+
+
 def test_metadata_rides_along_but_no_tags(ctx):
     list(run(ctx, Params()))
     file = uploaded_names(ctx)["IMG_1.HEIC"][1]

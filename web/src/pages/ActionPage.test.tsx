@@ -46,6 +46,19 @@ const ACTIONS = [
     order: 40,
     schema: { type: 'object', properties: {} },
   },
+  {
+    id: 'clear_stale_trees',
+    title: 'Clear Stale Trees',
+    description: 'Trash a verified extracted tree.',
+    order: 50,
+    schema: {
+      type: 'object',
+      properties: {
+        tree_folder_id: { type: 'string', title: 'Tree Folder Id', default: '' },
+        confirm: { type: 'boolean', title: 'Confirm', default: false },
+      },
+    },
+  },
 ]
 
 function renderAt(path: string) {
@@ -76,6 +89,23 @@ describe('ActionPage', () => {
     renderAt('/actions/check_connection')
     await userEvent.click(screen.getByRole('button', { name: /run/i }))
     expect(runAction).toHaveBeenCalledWith('check_connection', {})
+  })
+
+  it('sends the filled-in parameters when the action has some', async () => {
+    renderAt('/actions/clear_stale_trees')
+    await userEvent.type(screen.getByLabelText('Tree Folder Id'), 'abc123')
+    await userEvent.click(screen.getByLabelText('Confirm'))
+    await userEvent.click(screen.getByRole('button', { name: /run/i }))
+    expect(runAction).toHaveBeenCalledWith('clear_stale_trees', {
+      tree_folder_id: 'abc123',
+      confirm: true,
+    })
+  })
+
+  it('sends empty params when the form is untouched', async () => {
+    renderAt('/actions/clear_stale_trees')
+    await userEvent.click(screen.getByRole('button', { name: /run/i }))
+    expect(runAction).toHaveBeenCalledWith('clear_stale_trees', {})
   })
 
   it('shows in-flight files once an organize run starts', async () => {

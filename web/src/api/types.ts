@@ -15,12 +15,24 @@ export interface DriveFolder {
   mimeType: string
 }
 
+export interface ParamProperty {
+  type?: string
+  anyOf?: { type: string }[]
+  title?: string
+  default?: unknown
+}
+
+export interface ActionSchema {
+  type: string
+  properties?: Record<string, ParamProperty>
+}
+
 export interface ActionSpec {
   id: string
   title: string
   description: string
   order: number
-  schema: { type: string; properties?: Record<string, unknown> }
+  schema: ActionSchema
 }
 
 export interface Job {

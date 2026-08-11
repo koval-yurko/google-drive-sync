@@ -124,6 +124,34 @@ class ScanRepo:
         )
         self._conn.commit()
 
+    def record_drive_file(
+        self,
+        *,
+        drive_id: str,
+        name: str,
+        parent_path: str,
+        md5: str,
+        size: int,
+        mime_type: str,
+    ) -> None:
+        """One verified upload, straight from Organize.
+
+        The same upsert the scan uses, minus the sweep — one new file says
+        nothing about whether the rest of the index is still true.
+        """
+        self._conn.execute(
+            "INSERT INTO drive_files "
+            "  (drive_id, name, parent_path, md5, size, mime_type, indexed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(drive_id) DO UPDATE SET "
+            "  name = excluded.name, parent_path = excluded.parent_path, "
+            "  md5 = excluded.md5, size = excluded.size, "
+            "  mime_type = excluded.mime_type, indexed_at = excluded.indexed_at, "
+            "  trashed_at = NULL",
+            (drive_id, name, parent_path, md5, size, mime_type, _now()),
+        )
+        self._conn.commit()
+
     def drive_file_names(self) -> dict[str, list[sqlite3.Row]]:
         grouped: dict[str, list[sqlite3.Row]] = defaultdict(list)
         for row in self._conn.execute("SELECT * FROM drive_files"):

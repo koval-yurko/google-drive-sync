@@ -23,9 +23,10 @@ from typing import Iterator
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.db.media_repo import MediaRepo
 from photolib.db.settings_repo import PHOTOS_ROOT
+from photolib.db.scan_repo import ScanRepo
 from photolib.downloads import InflightRegistry, run_folder_name, sweep_empty
 from photolib.drive.errors import DriveError
-from photolib.transfer import TransferError, transfer_entry
+from photolib.transfer import TransferError, mime_for, transfer_entry
 from photolib.ziparchive.reader import ZipEntry
 
 ID = "organize"
@@ -92,6 +93,7 @@ def _prepare_folders(ctx: ActionContext, root_id: str, rows) -> dict[str, str]:
 
 def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     repo = MediaRepo(ctx.conn)
+    scans = ScanRepo(ctx.conn)
 
     if ctx.writer is None:
         yield ProgressEvent(
@@ -229,6 +231,16 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
             else:
                 repo.mark_uploaded(
                     row["entry_id"], result.drive_file_id, result.md5
+                )
+                # The Library browses drive_files; record the arrival so it
+                # is visible without waiting for the next Scan.
+                scans.record_drive_file(
+                    drive_id=result.drive_file_id,
+                    name=row["target_name"],
+                    parent_path=row["target_folder"],
+                    md5=result.md5,
+                    size=result.size,
+                    mime_type=mime_for(row["target_name"]),
                 )
                 uploaded += 1
                 level = "info"
