@@ -82,12 +82,6 @@ export function FilterSidebar({
         onPick={(value) => set({ mediaType: value as LibraryFilters['mediaType'] })}
       />
       <FacetList
-        title="Place"
-        facets={facets.places}
-        active={filters.place}
-        onPick={(place) => set({ place })}
-      />
-      <FacetList
         title="Country"
         facets={facets.countries}
         active={filters.country}

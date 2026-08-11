@@ -7,7 +7,6 @@ import type { MediaType } from '../api/types'
  */
 export interface LibraryFilters {
   month?: string
-  place?: string
   country?: string
   mediaType?: MediaType
   tagId?: number
@@ -20,7 +19,6 @@ export const EMPTY_FILTERS: LibraryFilters = {}
 export function toQuery(filters: LibraryFilters): URLSearchParams {
   const params = new URLSearchParams()
   if (filters.month) params.set('month', filters.month)
-  if (filters.place) params.set('place', filters.place)
   if (filters.country) params.set('country', filters.country)
   if (filters.mediaType) params.set('media_type', filters.mediaType)
   if (filters.tagId !== undefined) params.set('tag_id', String(filters.tagId))
@@ -37,7 +35,6 @@ export function isEmpty(filters: LibraryFilters): boolean {
 export function describe(filters: LibraryFilters): string[] {
   const labels: string[] = []
   if (filters.month) labels.push(filters.month)
-  if (filters.place) labels.push(filters.place)
   if (filters.country) labels.push(filters.country)
   if (filters.mediaType) labels.push(filters.mediaType)
   if (filters.duplicates) labels.push('duplicates')

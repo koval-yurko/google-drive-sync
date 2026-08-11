@@ -11,7 +11,7 @@ const listReviewMedia = vi.fn(async (_opts?: object) => ({
       name: 'IMG_1.HEIC', path: 'd/IMG_1.HEIC', archive_name: 'a.zip',
       target_folder: '2023-11', target_name: 'IMG_1.HEIC',
       capture_time: 1700000000, capture_source: 'photo_taken_time',
-      place: 'Warsaw', country: 'Poland',
+      country: 'Poland',
       duplicate_of: null, duplicate_reason: null,
       upload_status: 'done', error: null, drive_file_id: 'f1', size: 100,
     },
@@ -20,7 +20,7 @@ const listReviewMedia = vi.fn(async (_opts?: object) => ({
       name: 'IMG_2.MOV', path: 'd/IMG_2.MOV', archive_name: 'a.zip',
       target_folder: '2019-01', target_name: 'IMG_2.MOV',
       capture_time: null, capture_source: 'year_folder',
-      place: null, country: null,
+      country: null,
       duplicate_of: 'back_2024_01', duplicate_reason: 'name match',
       upload_status: 'error', error: 'crc: CRC mismatch',
       drive_file_id: null, size: 200,
@@ -35,7 +35,7 @@ const retryUpload = vi.fn(async (_id: number) => ({
 vi.mock('../api/client', () => ({
   getReviewSummary: vi.fn(async () => ({
     media: 2, planned: 2, unplanned: 0, duplicates: 1,
-    with_place: 1, with_sidecar: 1, pending: 0, uploaded: 1, errors: 1,
+    with_sidecar: 1, pending: 0, uploaded: 1, errors: 1,
     archives: 1, entries: 3, drive_files: 5,
   })),
   listReviewMedia: (opts?: object) => listReviewMedia(opts),

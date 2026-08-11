@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ActionSpec } from '../api/types'
 import { ActionPage } from './ActionPage'
 
 const runAction = vi.fn(async (_id: string, _params: object) => ({
@@ -31,7 +32,7 @@ vi.mock('../api/client', () => ({
   getDownloads: () => getDownloads(),
 }))
 
-const ACTIONS = [
+const ACTIONS: ActionSpec[] = [
   {
     id: 'check_connection',
     title: 'Check Connection',

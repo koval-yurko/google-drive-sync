@@ -6,7 +6,6 @@ const TILES: Array<{ key: keyof ReviewSummary; label: string }> = [
   { key: 'media', label: 'media files' },
   { key: 'planned', label: 'with a destination' },
   { key: 'duplicates', label: 'already in the destination' },
-  { key: 'with_place', label: 'with a place' },
   { key: 'uploaded', label: 'uploaded' },
   { key: 'errors', label: 'failed' },
 ]
@@ -93,7 +92,6 @@ export function ReviewPage() {
             <th>Destination</th>
             <th>Date</th>
             <th>Source</th>
-            <th>Place</th>
             <th>Already there</th>
             <th>Status</th>
           </tr>
@@ -110,7 +108,6 @@ export function ReviewPage() {
               </td>
               <td>{when(row)}</td>
               <td>{row.capture_source ?? '—'}</td>
-              <td>{row.place ?? '—'}</td>
               <td className={row.duplicate_of ? 'warn' : undefined}>
                 {row.duplicate_of ?? '—'}
               </td>

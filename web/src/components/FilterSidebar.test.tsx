@@ -11,7 +11,6 @@ const FACETS = {
     { value: '2025-06', count: 7 },
     { value: '2025-05', count: 5 },
   ],
-  places: [{ value: 'Warsaw', count: 4 }],
   countries: [{ value: 'Poland', count: 4 }],
   types: [
     { value: 'image', count: 9 },
@@ -57,9 +56,9 @@ describe('FilterSidebar', () => {
     expect(screen.getByRole('button', { name: /2025-06/ }).textContent).toContain('7')
   })
 
-  it('lists places, types, and tags', () => {
+  it('lists countries, types, and tags', () => {
     setup()
-    expect(screen.getByRole('button', { name: /Warsaw/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Poland/ })).toBeTruthy()
     expect(screen.getByRole('button', { name: /video/ })).toBeTruthy()
     expect(screen.getByRole('button', { name: /Family/ })).toBeTruthy()
   })

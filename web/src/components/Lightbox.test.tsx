@@ -6,14 +6,14 @@ import { Lightbox } from './Lightbox'
 const IMAGE = {
   drive_id: 'd1', name: 'IMG_1.HEIC', month: '2025-06', mime_type: 'image/heic',
   media_type: 'image', size: 1048576, md5: 'abc', capture_time: 1750000000,
-  capture_source: 'photo_taken_time', place: 'Warsaw', country: 'Poland',
+  capture_source: 'photo_taken_time', country: 'Poland',
   duplicate_of: null, duplicate_reason: null, archive_name: 'part-001.zip',
   tags: [{ id: 1, name: 'Family', slug: 'family', color: '#f00' }],
 }
 
 const VIDEO = {
   ...IMAGE, drive_id: 'd2', name: 'VID_1.MOV', media_type: 'video',
-  mime_type: 'video/quicktime', place: null, country: null, tags: [],
+  mime_type: 'video/quicktime', country: null, tags: [],
   duplicate_of: '2025-06', duplicate_reason: 'name and size match an existing file',
 }
 
@@ -50,10 +50,9 @@ describe('Lightbox', () => {
     expect(frame?.getAttribute('src')).toBe('https://drive.google.com/file/d/d2/preview')
   })
 
-  it('shows capture date, place, and source archive', async () => {
+  it('shows capture date, country, and source archive', async () => {
     render(<Lightbox driveId="d1" {...props} />)
-    expect(await screen.findByText(/Warsaw/)).toBeTruthy()
-    expect(screen.getByText(/Poland/)).toBeTruthy()
+    expect(await screen.findByText(/Poland/)).toBeTruthy()
     expect(screen.getByText(/part-001.zip/)).toBeTruthy()
   })
 

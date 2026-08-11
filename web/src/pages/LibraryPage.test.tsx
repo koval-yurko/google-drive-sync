@@ -7,21 +7,21 @@ const ROWS = [
   {
     drive_id: 'd1', name: 'IMG_1.HEIC', month: '2025-06', mime_type: 'image/heic',
     media_type: 'image', size: 100, md5: 'a', capture_time: 1750000000,
-    capture_source: 'photo_taken_time', place: 'Warsaw', country: 'Poland',
+    capture_source: 'photo_taken_time', country: 'Poland',
     duplicate_of: null, duplicate_reason: null, archive_name: 'part-001.zip',
     tags: [{ id: 1, name: 'Family', slug: 'family', color: '#f00' }],
   },
   {
     drive_id: 'd2', name: 'VID_1.MOV', month: '2025-06', mime_type: 'video/quicktime',
     media_type: 'video', size: 200, md5: 'b', capture_time: null,
-    capture_source: null, place: null, country: null,
+    capture_source: null, country: null,
     duplicate_of: '2025-06', duplicate_reason: 'name and size match an existing file',
     archive_name: 'part-002.zip', tags: [],
   },
   {
     drive_id: 'd3', name: 'IMG_9.HEIC', month: '2025-05', mime_type: 'image/heic',
     media_type: 'image', size: 300, md5: 'c', capture_time: 1747000000,
-    capture_source: 'exif', place: 'Lisbon', country: 'Portugal',
+    capture_source: 'exif', country: 'Portugal',
     duplicate_of: null, duplicate_reason: null, archive_name: 'part-003.zip',
     tags: [],
   },
@@ -36,7 +36,6 @@ vi.mock('../api/client', () => ({
   getFacets: vi.fn(async () => ({
     total: 3,
     months: [{ value: '2025-06', count: 2 }, { value: '2025-05', count: 1 }],
-    places: [{ value: 'Warsaw', count: 1 }],
     countries: [{ value: 'Poland', count: 1 }],
     types: [{ value: 'image', count: 2 }, { value: 'video', count: 1 }],
     duplicates: 1,
