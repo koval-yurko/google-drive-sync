@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from photolib.drive.client import DriveClient
+from photolib.drive.client import DriveClient, DriveFile
 from photolib.drive.errors import DriveError, MAX_ATTEMPTS, NotFoundError, RateLimitedError, retry
 
 
@@ -234,3 +234,33 @@ def test_app_properties_returns_what_drive_holds():
         return httpx.Response(200, json={"appProperties": {"t_family": "1"}})
 
     assert client_with(handler).app_properties("f1") == {"t_family": "1"}
+
+
+def test_capture_hint_prefers_exif_time():
+    file = DriveFile(
+        id="x", name="a.heic", mimeType="image/heic",
+        imageMediaMetadata={"time": "2024:01:13 10:00:00"},
+        modifiedTime="2026-01-01T00:00:00Z",
+    )
+    assert file.capture_hint() == 1705140000   # 2024-01-13T10:00:00Z
+
+
+def test_capture_hint_falls_back_to_modified_time():
+    file = DriveFile(
+        id="x", name="a.mov", mimeType="video/quicktime",
+        modifiedTime="2024-01-13T10:00:00Z",
+    )
+    assert file.capture_hint() == 1705140000
+
+
+def test_capture_hint_survives_malformed_exif():
+    file = DriveFile(
+        id="x", name="a.heic", mimeType="image/heic",
+        imageMediaMetadata={"time": "not a timestamp"},
+        modifiedTime="2024-01-13T10:00:00Z",
+    )
+    assert file.capture_hint() == 1705140000
+
+
+def test_capture_hint_of_an_undated_file_is_none():
+    assert DriveFile(id="x", name="a", mimeType="image/heic").capture_hint() is None

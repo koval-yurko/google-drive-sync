@@ -7,6 +7,7 @@ and resumable uploads are far easier to express directly.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 
 import httpx
 from pydantic import BaseModel, Field
@@ -16,7 +17,8 @@ from photolib.drive.errors import raise_for_response, retry
 API_ROOT = "https://www.googleapis.com/drive/v3"
 FOLDER_MIME = "application/vnd.google-apps.folder"
 FILE_FIELDS = (
-    "id,name,mimeType,size,md5Checksum,modifiedTime,parents,thumbnailLink"
+    "id,name,mimeType,size,md5Checksum,createdTime,modifiedTime,parents,"
+    "thumbnailLink,imageMediaMetadata(time)"
 )
 
 # Drive's thumbnailLink ends in a size directive: .../abc=s220. Swapping it is
@@ -31,14 +33,43 @@ class DriveFile(BaseModel):
     size: int | None = None
     md5: str | None = Field(default=None, alias="md5Checksum")
     modified_time: str | None = Field(default=None, alias="modifiedTime")
+    created_time: str | None = Field(default=None, alias="createdTime")
     parents: list[str] = Field(default_factory=list)
     thumbnail_link: str | None = Field(default=None, alias="thumbnailLink")
+    image_media_metadata: dict | None = Field(
+        default=None, alias="imageMediaMetadata"
+    )
 
     model_config = {"populate_by_name": True}
 
     @property
     def is_folder(self) -> bool:
         return self.mime_type == FOLDER_MIME
+
+    def capture_hint(self) -> int | None:
+        """Best guess at when this was captured, in epoch seconds.
+
+        EXIF time is the real answer where Drive extracted one; file times
+        are the fallback for videos and stripped images. None means Drive
+        knows nothing datable about this file.
+        """
+        exif = (self.image_media_metadata or {}).get("time")
+        if exif:
+            try:
+                parsed = datetime.strptime(exif, "%Y:%m:%d %H:%M:%S")
+                return int(parsed.replace(tzinfo=timezone.utc).timestamp())
+            except ValueError:
+                pass
+        for stamp in (self.modified_time, self.created_time):
+            if not stamp:
+                continue
+            try:
+                return int(
+                    datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+                )
+            except ValueError:
+                continue
+        return None
 
 
 class DriveClient:
