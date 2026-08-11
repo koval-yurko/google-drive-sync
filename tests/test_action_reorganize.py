@@ -165,6 +165,34 @@ def test_undated_files_go_to_the_unknown_folder(ctx, drive):
     assert _parent_names(drive, "d9") == {"unknown-date"}
 
 
+def test_a_catalogued_undated_file_ignores_its_drive_capture_hint(ctx, drive):
+    # d4 is catalogued (capture_time NULL) but its drive_files row still
+    # carries a capture_hint from a rescan — that hint is an upload
+    # timestamp, not a capture date, and must not steer a catalogued file.
+    drive.add_file("d4", "IMG_4.HEIC", b"d", parent="f-old")
+    ctx.conn.execute(
+        "INSERT INTO entries (archive_id, path, name, crc32, size,"
+        " compressed_size, method, local_header_offset, kind) VALUES"
+        " (1, 'p/IMG_4.HEIC', 'IMG_4.HEIC', 4, 1, 1, 8, 0, 'media')"
+    )
+    ctx.conn.execute(
+        "INSERT INTO media (entry_id, capture_time, target_folder, target_name,"
+        " upload_status, drive_file_id)"
+        " VALUES (2, NULL, '2023-12', 'IMG_4.HEIC', 'done', 'd4')"
+    )
+    ctx.conn.execute(
+        "INSERT INTO drive_files (drive_id, name, parent_path, md5, size,"
+        " mime_type, capture_hint)"
+        " VALUES ('d4', 'IMG_4.HEIC', '2023-12', 'dddddd44', 1, 'image/heic', ?)",
+        (JAN_2024,),
+    )
+    ctx.conn.commit()
+
+    _run(ctx, confirm=True)
+
+    assert _parent_names(drive, "d4") == {"unknown-date"}
+
+
 def test_a_missing_writer_is_reported_not_crashed(ctx):
     ctx.writer = None
     events = _run(ctx)

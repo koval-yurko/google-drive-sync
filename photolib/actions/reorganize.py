@@ -80,7 +80,8 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
 
     rows = list(ctx.conn.execute(
         "SELECT d.drive_id, d.name, d.parent_path, d.md5, m.id AS media_id, "
-        "       COALESCE(m.capture_time, d.capture_hint) AS capture "
+        "       CASE WHEN m.id IS NULL THEN d.capture_hint "
+        "            ELSE m.capture_time END AS capture "
         "FROM drive_files d LEFT JOIN media m ON m.drive_file_id = d.drive_id "
         "WHERE d.trashed_at IS NULL ORDER BY d.parent_path, d.name"
     ))
@@ -97,7 +98,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     names: dict[str, set[str]] = defaultdict(set)
     for row in rows:
         month = buckets.month_of(row["capture"])
-        target = fmap.get(month, month) if month else buckets.UNKNOWN_FOLDER
+        target = fmap[month] if month else buckets.UNKNOWN_FOLDER
         targets[row["drive_id"]] = target
         if target == row["parent_path"]:
             names[target].add(row["name"])

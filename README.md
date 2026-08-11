@@ -65,8 +65,9 @@ many files a month ends up holding, later uploads can shift where a month's
 bucket falls — **Reorganize Folders** repacks the existing files to match,
 report-then-confirm like Sync Tags, with metadata-only moves (no bytes are
 re-downloaded or re-uploaded) and folders left empty trashed once they clear.
-The existing `back_*` folders are indexed for duplicate detection and are
-never read from, written to, renamed, or moved.
+The existing `back_*` folders are indexed for duplicate detection and left
+alone by the upload pipeline; **Reorganize Folders** is the one action that
+repacks their files into buckets and trashes them once empty.
 
 Files that already exist in the destination are flagged but **still uploaded** —
 deduplication is a deliberate later step, not part of this pipeline.

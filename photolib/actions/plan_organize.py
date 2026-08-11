@@ -131,7 +131,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
             unknown_dates += 1
 
         month = buckets.month_of(capture)
-        folder = fmap.get(month, month) if month else buckets.UNKNOWN_FOLDER
+        folder = fmap[month] if month else buckets.UNKNOWN_FOLDER
         name = row["name"]
         if (folder, name) in taken:
             name = _disambiguate(name, row["crc32"])
