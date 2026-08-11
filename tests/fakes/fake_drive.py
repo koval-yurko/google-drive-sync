@@ -152,6 +152,26 @@ class FakeDrive:
             else:
                 current[key] = value
 
+    def move(
+        self,
+        file_id: str,
+        *,
+        add_parent: str,
+        remove_parent: str,
+        name: str | None = None,
+        properties: dict[str, str | None] | None = None,
+    ) -> None:
+        if file_id not in self._files:
+            raise NotFoundError(f"no such file: {file_id}")
+        file = self._files[file_id]
+        parents = [p for p in file.parents if p != remove_parent] + [add_parent]
+        updates: dict = {"parents": parents}
+        if name is not None:
+            updates["name"] = name
+        self._files[file_id] = file.model_copy(update=updates)
+        if properties:
+            self.update_properties(file_id, properties)
+
     def start_session(
         self,
         parent_id: str,

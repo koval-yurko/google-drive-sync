@@ -216,3 +216,36 @@ def test_update_properties_sends_null_to_delete_one():
     writer_for(handler).update_properties("f1", {"t_gone": None})
 
     assert seen == [{"appProperties": {"t_gone": None}}]
+
+
+def test_move_changes_parent_name_and_properties_in_one_call():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["params"] = dict(request.url.params)
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": "f1"})
+
+    writer_for(handler).move(
+        "f1", add_parent="new-folder", remove_parent="old-folder",
+        name="IMG~abc123.HEIC", properties={"place": None},
+    )
+    assert seen["params"]["addParents"] == "new-folder"
+    assert seen["params"]["removeParents"] == "old-folder"
+    assert seen["body"] == {
+        "name": "IMG~abc123.HEIC", "appProperties": {"place": None},
+    }
+
+
+def test_move_without_a_rename_sends_no_name():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": "f1"})
+
+    writer_for(handler).move(
+        "f1", add_parent="new-folder", remove_parent="old-folder",
+        properties={"place": None},
+    )
+    assert seen["body"] == {"appProperties": {"place": None}}

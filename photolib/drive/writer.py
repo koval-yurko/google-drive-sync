@@ -114,6 +114,38 @@ class DriveWriter:
         )
         raise_for_response(response)
 
+    # ---------- moving ----------
+
+    @retry
+    def move(
+        self,
+        file_id: str,
+        *,
+        add_parent: str,
+        remove_parent: str,
+        name: str | None = None,
+        properties: dict[str, str | None] | None = None,
+    ) -> None:
+        """Reparent a file — and optionally rename it and adjust its private
+        appProperties — in a single metadata-only call. No bytes move."""
+        body: dict = {}
+        if name is not None:
+            body["name"] = name
+        if properties:
+            body["appProperties"] = properties
+        response = self._http.patch(
+            f"{API_ROOT}/files/{file_id}",
+            params={
+                "supportsAllDrives": "true",
+                "fields": "id",
+                "addParents": add_parent,
+                "removeParents": remove_parent,
+            },
+            headers=self._headers({"Content-Type": JSON_TYPE}),
+            content=json.dumps(body),
+        )
+        raise_for_response(response)
+
     # ---------- resumable upload ----------
 
     @retry
