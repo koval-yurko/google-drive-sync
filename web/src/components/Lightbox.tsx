@@ -66,11 +66,8 @@ export function Lightbox({
             </dd>
             <dt>Month</dt>
             <dd>{file.month || 'Unfiled'}</dd>
-            <dt>Place</dt>
-            <dd>
-              {file.place ?? '—'}
-              {file.country ? `, ${file.country}` : ''}
-            </dd>
+            <dt>Country</dt>
+            <dd>{file.country ?? '—'}</dd>
             <dt>Size</dt>
             <dd>{megabytes(file.size)}</dd>
             <dt>From archive</dt>

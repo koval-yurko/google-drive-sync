@@ -63,13 +63,13 @@ def test_set_plan_writes_every_column(seeded):
     repo.upsert_media(1)
     repo.set_plan(
         1, capture_time=1700000000, capture_source="photo_taken_time",
-        latitude=52.2, longitude=21.0, place="Warsaw", country="Poland",
+        latitude=52.2, longitude=21.0, country="Poland",
         target_folder="2023-11", target_name="IMG_1.HEIC",
         duplicate_of="back_2024_01", duplicate_reason="name and size match",
     )
     row = repo.all_media()[0]
     assert row["target_folder"] == "2023-11"
-    assert row["place"] == "Warsaw"
+    assert row["country"] == "Poland"
     assert row["duplicate_reason"] == "name and size match"
     assert row["upload_status"] == "pending"   # a verdict never withholds upload
 
@@ -103,13 +103,12 @@ def test_summary_counts(seeded):
     repo.upsert_media(1)
     repo.upsert_media(3)
     repo.set_plan(1, target_folder="2023-11", target_name="IMG_1.HEIC",
-                  capture_source="photo_taken_time", place="Warsaw")
+                  capture_source="photo_taken_time")
     repo.set_plan(3, duplicate_of="back_2024_01", duplicate_reason="name match")
     s = repo.summary()
     assert s["media"] == 2
     assert s["planned"] == 1
     assert s["duplicates"] == 1
-    assert s["with_place"] == 1
     assert s["unplanned"] == 1
 
 

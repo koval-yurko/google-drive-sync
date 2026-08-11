@@ -15,12 +15,24 @@ export interface DriveFolder {
   mimeType: string
 }
 
+export interface ParamProperty {
+  type?: string
+  anyOf?: { type: string }[]
+  title?: string
+  default?: unknown
+}
+
+export interface ActionSchema {
+  type: string
+  properties?: Record<string, ParamProperty>
+}
+
 export interface ActionSpec {
   id: string
   title: string
   description: string
   order: number
-  schema: { type: string; properties?: Record<string, unknown> }
+  schema: ActionSchema
 }
 
 export interface Job {
@@ -49,7 +61,6 @@ export interface ReviewSummary {
   planned: number
   unplanned: number
   duplicates: number
-  with_place: number
   with_sidecar: number
   pending: number
   uploaded: number
@@ -68,7 +79,6 @@ export interface ReviewMedia {
   target_name: string | null
   capture_time: number | null
   capture_source: string | null
-  place: string | null
   country: string | null
   duplicate_of: string | null
   duplicate_reason: string | null
@@ -101,7 +111,6 @@ export interface LibraryFile {
   md5: string | null
   capture_time: number | null
   capture_source: string | null
-  place: string | null
   country: string | null
   duplicate_of: string | null
   duplicate_reason: string | null
@@ -117,7 +126,6 @@ export interface Facet {
 export interface Facets {
   total: number
   months: Facet[]
-  places: Facet[]
   countries: Facet[]
   types: Facet[]
   duplicates: number

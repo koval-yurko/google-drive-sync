@@ -104,17 +104,19 @@ class ScanRepo:
         stamp = _now()
         self._conn.executemany(
             "INSERT INTO drive_files "
-            "  (drive_id, name, parent_path, md5, size, mime_type, indexed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "  (drive_id, name, parent_path, md5, size, mime_type, capture_hint, "
+            "   indexed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(drive_id) DO UPDATE SET "
             "  name = excluded.name, parent_path = excluded.parent_path, "
             "  md5 = excluded.md5, size = excluded.size, "
-            "  mime_type = excluded.mime_type, indexed_at = excluded.indexed_at, "
+            "  mime_type = excluded.mime_type, capture_hint = excluded.capture_hint, "
+            "  indexed_at = excluded.indexed_at, "
             "  trashed_at = NULL",
             [
                 (
                     r["drive_id"], r["name"], r["parent_path"], r["md5"],
-                    r["size"], r.get("mime_type"), stamp,
+                    r["size"], r.get("mime_type"), r.get("capture_hint"), stamp,
                 )
                 for r in rows
             ],
@@ -124,9 +126,43 @@ class ScanRepo:
         )
         self._conn.commit()
 
+    def record_drive_file(
+        self,
+        *,
+        drive_id: str,
+        name: str,
+        parent_path: str,
+        md5: str,
+        size: int,
+        mime_type: str,
+        capture_hint: int | None = None,
+    ) -> None:
+        """One verified upload, straight from Organize.
+
+        The same upsert the scan uses, minus the sweep — one new file says
+        nothing about whether the rest of the index is still true.
+        """
+        self._conn.execute(
+            "INSERT INTO drive_files "
+            "  (drive_id, name, parent_path, md5, size, mime_type, capture_hint, "
+            "   indexed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(drive_id) DO UPDATE SET "
+            "  name = excluded.name, parent_path = excluded.parent_path, "
+            "  md5 = excluded.md5, size = excluded.size, "
+            "  mime_type = excluded.mime_type, capture_hint = excluded.capture_hint, "
+            "  indexed_at = excluded.indexed_at, "
+            "  trashed_at = NULL",
+            (drive_id, name, parent_path, md5, size, mime_type, capture_hint, _now()),
+        )
+        self._conn.commit()
+
     def drive_file_names(self) -> dict[str, list[sqlite3.Row]]:
+        """Live files only: a copy sitting in Drive's trash duplicates nothing."""
         grouped: dict[str, list[sqlite3.Row]] = defaultdict(list)
-        for row in self._conn.execute("SELECT * FROM drive_files"):
+        for row in self._conn.execute(
+            "SELECT * FROM drive_files WHERE trashed_at IS NULL"
+        ):
             grouped[row["name"]].append(row)
         return grouped
 

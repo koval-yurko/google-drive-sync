@@ -57,10 +57,14 @@ class FakeDrive:
         content: bytes,
         parent: str,
         mime_type: str = "application/octet-stream",
+        modified_time: str | None = None,
+        image_time: str | None = None,
     ) -> DriveFile:
         file = DriveFile(
             id=id, name=name, mimeType=mime_type, size=len(content),
             md5Checksum=hashlib.md5(content).hexdigest(), parents=[parent],
+            modifiedTime=modified_time,
+            imageMediaMetadata={"time": image_time} if image_time else None,
         )
         self._files[id] = file
         self._content[id] = content
@@ -147,6 +151,28 @@ class FakeDrive:
                 current.pop(key, None)
             else:
                 current[key] = value
+
+    def move(
+        self,
+        file_id: str,
+        *,
+        add_parent: str,
+        remove_parent: str,
+        name: str | None = None,
+        properties: dict[str, str | None] | None = None,
+    ) -> None:
+        if file_id not in self._files:
+            raise NotFoundError(f"no such file: {file_id}")
+        file = self._files[file_id]
+        parents = [p for p in file.parents if p != remove_parent]
+        if add_parent not in parents:
+            parents.append(add_parent)
+        updates: dict = {"parents": parents}
+        if name is not None:
+            updates["name"] = name
+        self._files[file_id] = file.model_copy(update=updates)
+        if properties:
+            self.update_properties(file_id, properties)
 
     def start_session(
         self,

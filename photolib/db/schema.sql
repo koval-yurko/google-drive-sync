@@ -76,7 +76,6 @@ CREATE TABLE IF NOT EXISTS media (
     capture_source   TEXT,
     latitude         REAL,
     longitude        REAL,
-    place            TEXT,
     country          TEXT,
     target_folder    TEXT,
     target_name      TEXT,
@@ -106,7 +105,8 @@ CREATE TABLE IF NOT EXISTS drive_files (
     indexed_at  TEXT,
     trashed_at  TEXT,
     mime_type   TEXT,
-    synced_tags TEXT
+    synced_tags TEXT,
+    capture_hint INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_drive_files_name ON drive_files(name);

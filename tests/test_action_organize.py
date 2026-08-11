@@ -77,8 +77,8 @@ def test_every_planned_file_is_uploaded(ctx):
     list(run(ctx, Params()))
     found = uploaded_names(ctx)
     assert set(found) == {"IMG_1.HEIC", "IMG_2.MOV"}
-    assert found["IMG_1.HEIC"][0] == "2023-11"
-    assert found["IMG_2.MOV"][0] == "2019-01"
+    assert found["IMG_1.HEIC"][0] == "2019-01 - 2023-11"
+    assert found["IMG_2.MOV"][0] == "2019-01 - 2023-11"
 
 
 def test_uploaded_bytes_are_the_real_bytes(ctx):
@@ -93,6 +93,18 @@ def test_the_catalog_records_the_drive_id_and_md5(ctx):
     assert rows["IMG_1.HEIC"]["upload_status"] == "done"
     assert rows["IMG_1.HEIC"]["drive_file_id"]
     assert rows["IMG_1.HEIC"]["md5"] == hashlib.md5(HEIC).hexdigest()
+
+
+def test_uploads_land_in_the_library_index_without_a_rescan(ctx):
+    list(run(ctx, Params()))
+    rows = {
+        r["name"]: r
+        for r in ctx.conn.execute("SELECT * FROM drive_files")
+    }
+    assert rows["IMG_1.HEIC"]["parent_path"] == "2019-01 - 2023-11"
+    assert rows["IMG_1.HEIC"]["md5"] == hashlib.md5(HEIC).hexdigest()
+    assert rows["IMG_1.HEIC"]["mime_type"] == "image/heic"
+    assert rows["IMG_2.MOV"]["mime_type"] == "video/quicktime"
 
 
 def test_metadata_rides_along_but_no_tags(ctx):
@@ -111,11 +123,11 @@ def test_rerunning_uploads_nothing_twice(ctx):
     assert (len(ctx.drive.trashed), len(uploaded_names(ctx))) == before
 
 
-def test_a_month_folder_is_created_once(ctx):
+def test_a_bucket_folder_is_created_once(ctx):
     list(run(ctx, Params()))
     list(run(ctx, Params()))
     names = [f.name for f in ctx.drive.list_children("photos", folders_only=True)]
-    assert sorted(names) == ["2019-01", "2023-11"]
+    assert sorted(names) == ["2019-01 - 2023-11"]
 
 
 def test_an_unplanned_catalog_is_refused(ctx):
@@ -243,7 +255,7 @@ def test_a_live_transfer_is_visible_while_it_moves(ctx, monkeypatch):
     list(run(ctx, Params(workers=1)))
 
     assert {view.name for view in seen} == {"IMG_1.HEIC", "IMG_2.MOV"}
-    assert {view.destination for view in seen} == {"Photos/2023-11", "Photos/2019-01"}
+    assert {view.destination for view in seen} == {"Photos/2019-01 - 2023-11"}
     assert all(view.total > 0 for view in seen)
 
 

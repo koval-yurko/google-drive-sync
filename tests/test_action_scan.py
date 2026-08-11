@@ -54,11 +54,27 @@ def test_indexes_the_destination_folder(ctx):
     assert by_name["IMG_1.HEIC"][0]["parent_path"] == "back_2024_01"
 
 
+def test_indexes_the_destination_at_any_depth(ctx):
+    ctx.drive.add_folder("sub", "sub", parent="back")
+    ctx.drive.add_file("d2", "DEEP.JPG", b"deep-bytes", parent="sub")
+    drain(ctx)
+    by_name = ScanRepo(ctx.conn).drive_file_names()
+    assert by_name["DEEP.JPG"][0]["parent_path"] == "back_2024_01/sub"
+
+
 def test_rerun_skips_unchanged_archives(ctx):
     drain(ctx)
     messages = drain(ctx)
     assert any("unchanged" in m for m in messages)
     assert ScanRepo(ctx.conn).counts()["entries"] == 3
+
+
+def test_no_archives_still_refreshes_the_destination_index(ctx):
+    ctx.drive.trash("z1")
+    messages = drain(ctx)
+    assert any("No archives" in m for m in messages)
+    by_name = ScanRepo(ctx.conn).drive_file_names()
+    assert by_name["IMG_1.HEIC"][0]["parent_path"] == "back_2024_01"
 
 
 def test_reports_missing_configuration(tmp_path, monkeypatch):
@@ -76,3 +92,15 @@ def test_run_is_a_generator():
     import inspect
 
     assert inspect.isgeneratorfunction(run)
+
+
+def test_scan_records_a_capture_hint_for_destination_files(ctx):
+    ctx.drive.add_file(
+        "hinted", "IMG_7.HEIC", b"x", parent="photos",
+        mime_type="image/heic", modified_time="2024-01-13T10:00:00Z",
+    )
+    list(run(ctx, Params()))
+    row = ctx.conn.execute(
+        "SELECT capture_hint FROM drive_files WHERE drive_id = 'hinted'"
+    ).fetchone()
+    assert row["capture_hint"] == 1705140000

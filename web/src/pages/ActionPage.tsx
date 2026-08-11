@@ -4,6 +4,7 @@ import { getDownloads, runAction } from '../api/client'
 import type { ActionSpec, Downloads } from '../api/types'
 import { InflightTable } from '../components/InflightTable'
 import { JobProgress } from '../components/JobProgress'
+import { ParamsForm, toPayload, type ParamValues } from '../components/ParamsForm'
 
 const POLL_MS = 1000
 
@@ -13,6 +14,9 @@ export function ActionPage({ actions }: { actions: ActionSpec[] }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [downloads, setDownloads] = useState<Downloads | null>(null)
+  const [values, setValues] = useState<ParamValues>({})
+
+  useEffect(() => setValues({}), [actionId])
 
   const watching = actionId === 'organize' && jobId !== null
 
@@ -48,7 +52,7 @@ export function ActionPage({ actions }: { actions: ActionSpec[] }) {
     setBusy(true)
     setError(null)
     try {
-      const job = await runAction(action.id, {})
+      const job = await runAction(action.id, toPayload(action.schema, values))
       setJobId(job.id)
     } catch (e) {
       setError(String(e))
@@ -57,15 +61,11 @@ export function ActionPage({ actions }: { actions: ActionSpec[] }) {
     }
   }
 
-  const hasParams = Object.keys(action.schema.properties ?? {}).length > 0
-
   return (
     <>
       <h2>{action.title}</h2>
       <p>{action.description}</p>
-      {hasParams && (
-        <pre className="log">{JSON.stringify(action.schema, null, 2)}</pre>
-      )}
+      <ParamsForm schema={action.schema} values={values} onChange={setValues} />
       <button onClick={start} disabled={busy}>
         {busy ? 'Starting…' : 'Run'}
       </button>

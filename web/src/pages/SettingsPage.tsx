@@ -7,7 +7,7 @@ const FIELDS = [
   {
     key: 'photos_root',
     label: 'Global Photos folder',
-    help: 'Where organised photos will be placed, in YYYY-MM subfolders.',
+    help: 'Where organised photos will be placed, in date-range subfolders of ~100 files.',
   },
   {
     key: 'zip_source',

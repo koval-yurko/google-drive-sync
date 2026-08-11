@@ -11,7 +11,7 @@ router = APIRouter(tags=["review"])
 
 ROW_FIELDS = (
     "name", "path", "archive_name", "target_folder", "target_name",
-    "capture_time", "capture_source", "place", "country",
+    "capture_time", "capture_source", "country",
     "duplicate_of", "duplicate_reason", "upload_status",
     "error", "drive_file_id",
 )

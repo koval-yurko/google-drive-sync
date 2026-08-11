@@ -6,7 +6,7 @@ survives the file leaving and returning, and that `file_tags` may hold rows
 for files no longer in Drive — those are retained, not pruned, and excluded
 from every count.
 
-Every tag here is manual. Place, country, year, month, device and archive are
+Every tag here is manual. Country, month, media type and duplicate status are
 derived from columns at query time (see `library_repo`), never stored as rows.
 """
 

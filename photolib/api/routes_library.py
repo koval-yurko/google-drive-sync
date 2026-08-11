@@ -16,7 +16,6 @@ router = APIRouter(tags=["library"])
 
 def _filters(
     month: str | None = None,
-    place: str | None = None,
     country: str | None = None,
     media_type: str | None = Query(default=None, pattern="^(image|video|other)$"),
     tag_id: int | None = None,
@@ -24,7 +23,7 @@ def _filters(
     search: str | None = None,
 ) -> Filters:
     return Filters(
-        month=month, place=place, country=country, media_type=media_type,
+        month=month, country=country, media_type=media_type,
         tag_id=tag_id, duplicates=duplicates, search=search,
     )
 

@@ -23,14 +23,14 @@ def library(conn):
         )
     # media rows for everything but 'orphan'
     rows = [
-        # entry path, drive_file_id, capture, place, country, dup_of, dup_reason
-        ("Takeout/1.HEIC", "d1", 1700000000, "Warsaw", "Poland", None, None),
-        ("Takeout/2.HEIC", "d2", 1700000100, "Lisbon", "Portugal", "2025-05",
+        # entry path, drive_file_id, capture, country, dup_of, dup_reason
+        ("Takeout/1.HEIC", "d1", 1700000000, "Poland", None, None),
+        ("Takeout/2.HEIC", "d2", 1700000100, "Portugal", "2025-05",
          "name and size match an existing file"),
-        ("Takeout/3.MOV", "d3", 1710000000, "Warsaw", "Poland", None, None),
-        ("Takeout/4.txt", "d4", None, None, None, None, None),
+        ("Takeout/3.MOV", "d3", 1710000000, "Poland", None, None),
+        ("Takeout/4.txt", "d4", None, None, None, None),
     ]
-    for index, (path, drive_id, capture, place, country, dup, reason) in enumerate(rows, 1):
+    for index, (path, drive_id, capture, country, dup, reason) in enumerate(rows, 1):
         conn.execute(
             "INSERT INTO entries (id, archive_id, path, name, crc32, size, "
             "  compressed_size, method, local_header_offset, kind) "
@@ -38,10 +38,10 @@ def library(conn):
             (index, path, path.rsplit("/", 1)[-1]),
         )
         conn.execute(
-            "INSERT INTO media (entry_id, capture_time, capture_source, place, "
+            "INSERT INTO media (entry_id, capture_time, capture_source, "
             "  country, duplicate_of, duplicate_reason, upload_status, drive_file_id) "
-            "VALUES (?, ?, 'sidecar', ?, ?, ?, ?, 'done', ?)",
-            (index, capture, place, country, dup, reason, drive_id),
+            "VALUES (?, ?, 'sidecar', ?, ?, ?, 'done', ?)",
+            (index, capture, country, dup, reason, drive_id),
         )
     conn.commit()
     return LibraryRepo(conn)
@@ -59,7 +59,7 @@ def test_a_file_with_no_media_row_still_appears(library):
     orphan = next(row for row in rows if row["drive_id"] == "orphan")
     assert orphan["name"] == "STRAY.JPG"
     assert orphan["capture_time"] is None
-    assert orphan["place"] is None
+    assert orphan["country"] is None
     assert orphan["month"] == "2025-06"
 
 
@@ -72,11 +72,6 @@ def test_rows_carry_the_source_archive(library):
 def test_filter_by_month(library):
     result = library.list_files(Filters(month="2025-05"), limit=100, offset=0)
     assert result["total"] == 2
-
-
-def test_filter_by_place(library):
-    result = library.list_files(Filters(place="Warsaw"), limit=100, offset=0)
-    assert {row["drive_id"] for row in result["rows"]} == {"d1", "d3"}
 
 
 def test_filter_by_country(library):
@@ -160,7 +155,6 @@ def test_facets_count_each_dimension(library):
         {"value": "2025-06", "count": 3},
         {"value": "2025-05", "count": 2},
     ]
-    assert {"value": "Warsaw", "count": 2} in facets["places"]
     assert {"value": "Poland", "count": 2} in facets["countries"]
     assert facets["types"] == [
         {"value": "image", "count": 3},
@@ -170,15 +164,10 @@ def test_facets_count_each_dimension(library):
     assert facets["duplicates"] == 1
 
 
-def test_facets_omit_files_with_no_place(library):
-    places = [f["value"] for f in library.facets()["places"]]
-    assert None not in places
-
-
 def test_detail_returns_one_file(library):
     detail = library.detail("d1")
     assert detail["name"] == "IMG_1.HEIC"
-    assert detail["place"] == "Warsaw"
+    assert detail["country"] == "Poland"
     assert detail["archive_name"] == "part-001.zip"
 
 

@@ -216,3 +216,53 @@ def test_update_properties_sends_null_to_delete_one():
     writer_for(handler).update_properties("f1", {"t_gone": None})
 
     assert seen == [{"appProperties": {"t_gone": None}}]
+
+
+def test_move_changes_parent_name_and_properties_in_one_call():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["params"] = dict(request.url.params)
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": "f1"})
+
+    writer_for(handler).move(
+        "f1", add_parent="new-folder", remove_parent="old-folder",
+        name="IMG~abc123.HEIC", properties={"place": None},
+    )
+    assert seen["params"]["addParents"] == "new-folder"
+    assert seen["params"]["removeParents"] == "old-folder"
+    assert seen["body"] == {
+        "name": "IMG~abc123.HEIC", "appProperties": {"place": None},
+    }
+
+
+def test_move_without_a_rename_sends_no_name():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"id": "f1"})
+
+    writer_for(handler).move(
+        "f1", add_parent="new-folder", remove_parent="old-folder",
+        properties={"place": None},
+    )
+    assert seen["body"] == {"appProperties": {"place": None}}
+
+
+def test_fake_move_does_not_duplicate_parent_on_retry():
+    """Ensure fake's move matches real Drive: parents is a set, no duplicates on retry."""
+    fake = FakeDrive()
+    fake.add_folder("parent1", "Parent 1")
+    fake.add_folder("parent2", "Parent 2")
+    fake.add_file("f1", "file.txt", b"content", parent="parent1")
+
+    # Move file from parent1 to parent2
+    fake.move("f1", add_parent="parent2", remove_parent="parent1")
+    assert fake.get_file("f1").parents == ["parent2"]
+
+    # Retry the same move: add_parent is already a parent
+    fake.move("f1", add_parent="parent2", remove_parent="parent1")
+    # Should still have exactly one instance of parent2, not a duplicate
+    assert fake.get_file("f1").parents == ["parent2"]

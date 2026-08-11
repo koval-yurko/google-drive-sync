@@ -46,19 +46,28 @@ Run these in order from the UI.
 | Check Connection | Verifies credentials and folders | No |
 | Scan Archives | Indexes archive contents and the destination folder | No |
 | Pair Metadata | Matches sidecars to media across archive parts | No |
-| Plan Organization | Resolves dates, places, duplicates, destinations | No |
+| Plan Organization | Resolves dates, countries, duplicates, destinations | No |
 | Review Plan | Shows every file and where it would go | No |
-| **Organize Photos** | **Uploads every planned file into `Photos/YYYY-MM/`** | **Yes** |
+| **Organize Photos** | **Uploads every planned file into its destination bucket folder** | **Yes** |
+| **Reorganize Folders** | **Repacks existing files into ~100-file bucket folders, trashing folders left empty** | **Yes** |
 | Library | Browse, filter, and tag what is now in Drive | No |
 | Tags | Create, rename, merge, and delete tags | No |
 | **Sync Tags to Drive** | **Mirrors tags onto each file's `appProperties`** | **Yes** |
 | **Clear Stale Trees** | **Moves a redundant extracted tree to Drive's trash** | **Yes** |
 
-Everything unbolded is safe to repeat. The three bolded rows mutate Drive.
+Everything unbolded is safe to repeat. The four bolded rows mutate Drive.
 
-Organised photos are destined for `Photos/YYYY-MM/`. The existing `back_*`
-folders are indexed for duplicate detection and are never read from, written to,
-renamed, or moved.
+Organised photos are destined for whole-month bucket folders under `Photos/`,
+packed greedily to roughly 100 files each: a busy month gets its own folder
+(`2026-05`), quiet months share one (`2025-01 - 2025-03`), and files with no
+resolvable date land in `unknown-date`. Because the packing depends on how
+many files a month ends up holding, later uploads can shift where a month's
+bucket falls — **Reorganize Folders** repacks the existing files to match,
+report-then-confirm like Sync Tags, with metadata-only moves (no bytes are
+re-downloaded or re-uploaded) and folders left empty trashed once they clear.
+The existing `back_*` folders are indexed for duplicate detection and left
+alone by the upload pipeline; **Reorganize Folders** is the one action that
+repacks their files into buckets and trashes them once empty.
 
 Files that already exist in the destination are flagged but **still uploaded** —
 deduplication is a deliberate later step, not part of this pipeline.
@@ -120,15 +129,15 @@ cache in `.cache/thumbnails` — Chrome cannot display HEIC, and 591 of these
 files are HEIC. Videos play in Drive's embedded preview, which handles the
 HEVC `.MOV` files browsers refuse.
 
-Filter by month, place, country, media type, tag, or duplicate status, and
+Filter by month, country, media type, tag, or duplicate status, and
 combine them freely. Duplicates are a filter here, not a separate page: those
 files were uploaded anyway, so they are part of the library. Select with
 click, shift-click for a range, ⌘-click to toggle, or **Select all matching
 this filter**, which selects the entire result set rather than only the tiles
 on screen. Double-click opens one file without disturbing the selection.
 
-Tags are yours to invent — `family`, `greece-2025`, `print-these`. Place,
-month, year and media type are *not* tags: they are filters derived from data
+Tags are yours to invent — `family`, `greece-2025`, `print-these`. Month,
+country and media type are *not* tags: they are filters derived from data
 the catalog already holds, so there is nothing to regenerate and nothing to
 go stale. Tagging writes only to the local catalog, which is why it is
 instant.

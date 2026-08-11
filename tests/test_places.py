@@ -26,9 +26,9 @@ def test_cache_key_rounds_to_about_one_kilometre():
     assert cache_key(52.2312345, 21.0119999) == cache_key(52.2349, 21.0121)
 
 
-def test_lookup_returns_place_and_country(conn):
+def test_lookup_returns_the_country(conn):
     geo = geocoder_with(conn, lambda request: httpx.Response(200, json=RESPONSE))
-    assert geo.lookup(52.23, 21.01) == ("Warsaw", "Poland")
+    assert geo.lookup(52.23, 21.01) == "Poland"
 
 
 def test_lookup_caches_and_does_not_call_twice(conn):
@@ -50,7 +50,7 @@ def test_cache_survives_a_new_geocoder(conn):
     def explode(request):
         raise AssertionError("should have been served from cache")
 
-    assert geocoder_with(conn, explode).lookup(52.23, 21.01) == ("Warsaw", "Poland")
+    assert geocoder_with(conn, explode).lookup(52.23, 21.01) == "Poland"
 
 
 def test_no_api_key_returns_nothing_and_makes_no_call(conn):
@@ -58,7 +58,7 @@ def test_no_api_key_returns_nothing_and_makes_no_call(conn):
         raise AssertionError("must not call the API without a key")
 
     geo = geocoder_with(conn, explode, api_key=None)
-    assert geo.lookup(52.23, 21.01) == (None, None)
+    assert geo.lookup(52.23, 21.01) is None
 
 
 def test_zero_results_is_cached_as_empty(conn):
@@ -69,14 +69,14 @@ def test_zero_results_is_cached_as_empty(conn):
         return httpx.Response(200, json={"status": "ZERO_RESULTS", "results": []})
 
     geo = geocoder_with(conn, handler)
-    assert geo.lookup(1.0, 1.0) == (None, None)
+    assert geo.lookup(1.0, 1.0) is None
     geo.lookup(1.0, 1.0)
     assert calls["n"] == 1
 
 
 def test_api_failure_returns_nothing_without_raising(conn):
     geo = geocoder_with(conn, lambda r: httpx.Response(500, text="boom"))
-    assert geo.lookup(52.23, 21.01) == (None, None)
+    assert geo.lookup(52.23, 21.01) is None
 
 
 def test_api_key_from_env_prefers_the_environment(tmp_path, monkeypatch):
