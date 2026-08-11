@@ -22,7 +22,7 @@ from photolib.db.scan_repo import ScanRepo
 ID = "plan_organize"
 TITLE = "Plan Organization"
 DESCRIPTION = (
-    "Resolve a capture date, place, duplicate verdict and destination for every "
+    "Resolve a capture date, country, duplicate verdict and destination for every "
     "media file. Writes nothing to Drive and can be re-run at will."
 )
 ORDER = 30
@@ -88,14 +88,14 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     )
     if not geocoder.enabled:
         yield ProgressEvent(
-            "No GOOGLE_MAPS_API_KEY configured — place tags will be skipped.",
+            "No GOOGLE_MAPS_API_KEY configured — country tags will be skipped.",
             progress=0.0,
             level="warn",
         )
 
     taken: set[tuple[str, str]] = set()
     total = len(rows)
-    duplicates = placed = unknown_dates = 0
+    duplicates = located = unknown_dates = 0
 
     for index, row in enumerate(rows, start=1):
         if index % 100 == 0 or index == total:
@@ -124,11 +124,11 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
 
         lat = sidecar["latitude"] if sidecar else None
         lon = sidecar["longitude"] if sidecar else None
-        place = country = None
+        country = None
         if lat is not None and lon is not None:
-            place, country = geocoder.lookup(lat, lon)
-            if place:
-                placed += 1
+            country = geocoder.lookup(lat, lon)
+            if country:
+                located += 1
 
         duplicate_of = duplicate_reason = None
         for candidate in existing.get(row["name"], []):
@@ -149,7 +149,6 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
             capture_source=source,
             latitude=lat,
             longitude=lon,
-            place=place,
             country=country,
             target_folder=folder,
             target_name=name,
@@ -162,6 +161,6 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         detail += f" {duplicates} already exist in the destination (will still upload)."
     if unknown_dates:
         detail += f" {unknown_dates} have no resolvable date."
-    if placed:
-        detail += f" {placed} carry a place."
+    if located:
+        detail += f" {located} carry a country."
     yield ProgressEvent(detail, progress=1.0)

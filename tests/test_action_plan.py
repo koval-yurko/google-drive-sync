@@ -126,9 +126,9 @@ def test_no_media_is_ever_marked_skipped(ctx):
     assert statuses == {"pending"}
 
 
-def test_place_is_absent_without_an_api_key(ctx):
+def test_country_is_absent_without_an_api_key(ctx):
     list(run(ctx, Params()))
-    assert by_name(ctx)["IMG_1.HEIC"]["place"] is None
+    assert by_name(ctx)["IMG_1.HEIC"]["country"] is None
 
 
 def test_rerun_replaces_the_previous_plan(ctx):

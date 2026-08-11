@@ -1,4 +1,4 @@
-"""Reverse-geocoding with a persistent cache.
+"""Reverse-geocoding to a country, with a persistent cache.
 
 Coordinates cluster heavily in this library, so rounding to roughly a kilometre
 before caching turns hundreds of files into a handful of API calls. The API key
@@ -16,7 +16,6 @@ import httpx
 
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 ENV_VAR = "GOOGLE_MAPS_API_KEY"
-PLACE_TYPES = ("locality", "postal_town", "administrative_area_level_2")
 
 
 def cache_key(lat: float, lon: float) -> str:
@@ -56,16 +55,17 @@ class Geocoder:
     def enabled(self) -> bool:
         return bool(self._api_key)
 
-    def lookup(self, lat: float, lon: float) -> tuple[str | None, str | None]:
+    def lookup(self, lat: float, lon: float) -> str | None:
+        """The country at these coordinates, or None."""
         key = cache_key(lat, lon)
         cached = self._conn.execute(
-            "SELECT place, country FROM geocache WHERE key = ?", (key,)
+            "SELECT country FROM geocache WHERE key = ?", (key,)
         ).fetchone()
         if cached is not None:
-            return cached["place"], cached["country"]
+            return cached["country"]
 
         if not self._api_key:
-            return None, None
+            return None
 
         try:
             response = self._http.get(
@@ -73,34 +73,28 @@ class Geocoder:
                 params={"latlng": f"{lat},{lon}", "key": self._api_key},
             )
             if not response.is_success:
-                return None, None
+                return None
             payload = response.json()
         except (httpx.HTTPError, ValueError):
-            return None, None
+            return None
 
-        place, country = self._extract(payload)
-        self._store(key, place, country, payload)
-        return place, country
+        country = self._extract(payload)
+        self._store(key, country, payload)
+        return country
 
     @staticmethod
-    def _extract(payload: dict) -> tuple[str | None, str | None]:
-        place = country = None
+    def _extract(payload: dict) -> str | None:
         for result in payload.get("results", []):
             for component in result.get("address_components", []):
-                types = component.get("types", [])
-                if country is None and "country" in types:
-                    country = component.get("long_name")
-                if place is None and any(t in types for t in PLACE_TYPES):
-                    place = component.get("long_name")
-            if place and country:
-                break
-        return place, country
+                if "country" in component.get("types", []):
+                    return component.get("long_name")
+        return None
 
-    def _store(self, key: str, place, country, payload: dict) -> None:
+    def _store(self, key: str, country: str | None, payload: dict) -> None:
         self._conn.execute(
-            "INSERT INTO geocache (key, place, country, raw_json) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET place = excluded.place, "
-            "country = excluded.country, raw_json = excluded.raw_json",
-            (key, place, country, json.dumps(payload)),
+            "INSERT INTO geocache (key, country, raw_json) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET country = excluded.country, "
+            "raw_json = excluded.raw_json",
+            (key, country, json.dumps(payload)),
         )
         self._conn.commit()

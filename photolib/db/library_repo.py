@@ -2,12 +2,12 @@
 
 Browses `drive_files` — what Drive actually holds, as of the last Scan — and
 left-joins the catalog for the things only the catalog knows: capture time,
-place, source archive, duplicate verdict. The join is exact rather than
+country, source archive, duplicate verdict. The join is exact rather than
 name-based, because Organize records `media.drive_file_id` on every success.
 A file that arrived in the destination by some other route keeps its row and
 shows nulls; it is never hidden.
 
-Month, place, country, type and duplicate status are computed here rather than
+Month, country, type and duplicate status are computed here rather than
 stored as tags. That is the whole reason Phase 4 has no `retag` action.
 """
 
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 ROW_FIELDS = (
     "drive_id", "name", "month", "mime_type", "media_type", "size", "md5",
-    "capture_time", "capture_source", "place", "country",
+    "capture_time", "capture_source", "country",
     "duplicate_of", "duplicate_reason", "archive_name",
 )
 
@@ -41,7 +41,7 @@ _FROM = (
 _SELECT = (
     "SELECT d.drive_id, d.name, d.parent_path AS month, d.mime_type, "
     f"       {_MEDIA_TYPE} AS media_type, d.size, d.md5, "
-    "       m.capture_time, m.capture_source, m.place, m.country, "
+    "       m.capture_time, m.capture_source, m.country, "
     "       m.duplicate_of, m.duplicate_reason, a.name AS archive_name "
 )
 
@@ -53,7 +53,6 @@ _ORDER = "ORDER BY d.parent_path DESC, d.name ASC"
 @dataclass(frozen=True)
 class Filters:
     month: str | None = None
-    place: str | None = None
     country: str | None = None
     media_type: str | None = None
     tag_id: int | None = None
@@ -67,9 +66,6 @@ def _where(filters: Filters) -> tuple[str, list]:
     if filters.month:
         clauses.append("d.parent_path = ?")
         args.append(filters.month)
-    if filters.place:
-        clauses.append("m.place = ?")
-        args.append(filters.place)
     if filters.country:
         clauses.append("m.country = ?")
         args.append(filters.country)
@@ -148,7 +144,6 @@ class LibraryRepo:
         return {
             "total": count("1 = 1"),
             "months": group("d.parent_path", "value DESC"),
-            "places": group("m.place", "count DESC, value ASC"),
             "countries": group("m.country", "count DESC, value ASC"),
             "types": group(_MEDIA_TYPE, "count DESC, value ASC"),
             "duplicates": count("m.duplicate_of IS NOT NULL"),

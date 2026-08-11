@@ -76,7 +76,6 @@ CREATE TABLE IF NOT EXISTS media (
     capture_source   TEXT,
     latitude         REAL,
     longitude        REAL,
-    place            TEXT,
     country          TEXT,
     target_folder    TEXT,
     target_name      TEXT,

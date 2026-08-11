@@ -33,10 +33,10 @@ def _schema(conn: sqlite3.Connection) -> set[tuple[str, str]]:
     }
 
 
-def test_version_is_four(tmp_path):
+def test_version_is_five(tmp_path):
     conn = catalog.connect(tmp_path / "fresh.db")
-    assert migrations.SCHEMA_VERSION == 4
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert migrations.SCHEMA_VERSION == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
 
 
 def test_media_has_the_upload_session_columns(tmp_path):
@@ -80,7 +80,7 @@ def test_upgrading_a_v2_catalog_matches_a_fresh_one(tmp_path):
     fresh = catalog.connect(tmp_path / "fresh.db")
 
     assert _schema(upgraded) == _schema(fresh)
-    assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 5
     assert upgraded.execute("SELECT value FROM settings").fetchone()["value"] == "x"
 
 
@@ -103,4 +103,20 @@ def test_migrating_twice_is_harmless(tmp_path):
     catalog.connect(db).close()
     conn = catalog.connect(db)
     migrations.migrate(conn)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+
+
+def test_an_upgraded_catalog_loses_the_place_column(conn):
+    from photolib.db.migrations import migrate
+
+    conn.execute("ALTER TABLE media ADD COLUMN place TEXT")
+    migrate(conn)
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(media)")}
+    assert "place" not in columns
+
+
+def test_migrate_is_idempotent_about_dropped_columns(conn):
+    from photolib.db.migrations import migrate
+
+    migrate(conn)
+    migrate(conn)   # a second run must not fail on the already-missing column

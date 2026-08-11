@@ -14,7 +14,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 # (table, column, full column definition)
@@ -28,6 +28,12 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("drive_files", "synced_tags", "synced_tags TEXT"),
 )
 
+# (table, column) pairs retired from the schema. SQLite 3.35+ supports
+# DROP COLUMN, and nothing indexes or references these.
+_DROPPED_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("media", "place"),
+)
+
 
 def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
@@ -39,5 +45,8 @@ def migrate(conn: sqlite3.Connection) -> None:
     for table, column, definition in _ADDED_COLUMNS:
         if column not in _columns(conn, table):
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+    for table, column in _DROPPED_COLUMNS:
+        if column in _columns(conn, table):
+            conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.commit()

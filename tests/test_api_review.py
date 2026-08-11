@@ -27,7 +27,7 @@ def client(tmp_path, monkeypatch):
         repo.upsert_media(1)
         repo.upsert_media(2)
         repo.set_plan(1, target_folder="2023-11", target_name="IMG_1.HEIC",
-                      capture_source="photo_taken_time", place="Warsaw")
+                      capture_source="photo_taken_time")
         repo.set_plan(2, target_folder="2019-01", target_name="IMG_2.MOV",
                       capture_source="year_folder",
                       duplicate_of="back_2024_01", duplicate_reason="name match")
@@ -39,7 +39,6 @@ def test_summary_reports_totals(client):
     assert body["media"] == 2
     assert body["planned"] == 2
     assert body["duplicates"] == 1
-    assert body["with_place"] == 1
 
 
 def test_media_returns_every_row(client):

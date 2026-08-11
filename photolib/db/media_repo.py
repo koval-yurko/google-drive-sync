@@ -17,7 +17,7 @@ _SIDECAR_FIELDS = (
 
 _PLAN_FIELDS = (
     "capture_time", "capture_source", "latitude", "longitude",
-    "place", "country", "target_folder", "target_name",
+    "country", "target_folder", "target_name",
     "duplicate_of", "duplicate_reason",
 )
 
@@ -31,7 +31,7 @@ _MEDIA_SELECT = """
 
 _UPLOAD_SELECT = """
     SELECT m.id AS media_id, m.entry_id, m.target_folder, m.target_name,
-           m.capture_time, m.place, m.country, m.upload_status,
+           m.capture_time, m.country, m.upload_status,
            m.upload_session_uri, m.upload_offset, m.session_started_at,
            m.attempts,
            e.path, e.name, e.crc32, e.size, e.compressed_size,
@@ -131,7 +131,6 @@ class MediaRepo:
             "planned": planned,
             "unplanned": media - planned,
             "duplicates": one("SELECT COUNT(*) FROM media WHERE duplicate_of IS NOT NULL"),
-            "with_place": one("SELECT COUNT(*) FROM media WHERE place IS NOT NULL"),
             "with_sidecar": one("SELECT COUNT(*) FROM media WHERE sidecar_id IS NOT NULL"),
             "pending": one("SELECT COUNT(*) FROM media WHERE upload_status = 'pending'"),
             "uploaded": one("SELECT COUNT(*) FROM media WHERE upload_status = 'done'"),

@@ -70,8 +70,6 @@ def _properties(row) -> dict[str, str]:
         props["capture_time"] = datetime.fromtimestamp(
             row["capture_time"], tz=timezone.utc
         ).isoformat()
-    if row["place"]:
-        props["place"] = row["place"]
     if row["country"]:
         props["country"] = row["country"]
     return {k: v[:_MAX_PROPERTY] for k, v in props.items()}
