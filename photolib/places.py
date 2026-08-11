@@ -2,8 +2,8 @@
 
 Coordinates cluster heavily in this library, so rounding to roughly a kilometre
 before caching turns hundreds of files into a handful of API calls. The API key
-is optional: with none configured, place lookup degrades to no-op rather than
-failing the surrounding work.
+is optional: with none configured, the country lookup degrades to no-op rather
+than failing the surrounding work.
 """
 
 from __future__ import annotations
