@@ -16,6 +16,20 @@ def _messages(ctx):
     return [e.message for e in verify_library.run(ctx, verify_library.Params())]
 
 
+def _warn_messages(ctx):
+    """Just the drift-category reports — one per category that fired.
+
+    Filters out the informational "Drive holds N file(s)" and closing
+    "No drift"/"Nothing was changed" events, so a count of these is a count
+    of categories, letting a test assert a single mutation trips exactly one
+    category rather than bleeding into others.
+    """
+    return [
+        e.message for e in verify_library.run(ctx, verify_library.Params())
+        if e.level == "warn"
+    ]
+
+
 def _config(tmp_path) -> Config:
     return Config(
         repo_root=tmp_path,
@@ -100,7 +114,9 @@ def test_reports_a_file_deleted_outside_the_app(verify_context, conn):
         "md5 = 'x' WHERE id = 1"
     )
     conn.commit()
-    assert any("no longer in Drive" in m for m in _messages(verify_context))
+    warnings = _warn_messages(verify_context)
+    assert any("no longer in Drive" in m for m in warnings)
+    assert len(warnings) == 1  # this mutation alone, not any other category
 
 
 def test_reports_a_file_moved_outside_the_app(verify_context, conn):
@@ -111,26 +127,74 @@ def test_reports_a_file_moved_outside_the_app(verify_context, conn):
     # the `drive_files` index row.
     conn.execute("UPDATE media SET target_folder = 'elsewhere' WHERE id = 1")
     conn.commit()
-    assert any("moved" in m for m in _messages(verify_context))
+    warnings = _warn_messages(verify_context)
+    assert any("moved" in m for m in warnings)
+    assert len(warnings) == 1
 
 
 def test_reports_an_md5_mismatch(verify_context, conn):
-    conn.execute("UPDATE media SET md5 = 'not-what-drive-says'")
+    conn.execute("UPDATE media SET md5 = 'not-what-drive-says' WHERE id = 1")
     conn.commit()
-    assert any("MD5" in m for m in _messages(verify_context))
+    warnings = _warn_messages(verify_context)
+    assert any("MD5" in m for m in warnings)
+    assert len(warnings) == 1
 
 
 def test_reports_a_done_row_never_confirmed(verify_context, conn):
-    conn.execute("UPDATE media SET upload_status = 'done', md5 = NULL")
+    conn.execute(
+        "UPDATE media SET upload_status = 'done', md5 = NULL WHERE id = 1"
+    )
     conn.commit()
-    assert any("never confirmed" in m for m in _messages(verify_context))
+    warnings = _warn_messages(verify_context)
+    assert any("never confirmed" in m for m in warnings)
+    assert len(warnings) == 1
 
 
 def test_reports_orphan_tags(verify_context, conn):
     conn.execute("INSERT INTO tags (name, slug) VALUES ('x', 'x')")
     conn.execute("INSERT INTO file_tags (drive_id, tag_id) VALUES ('ghost', 1)")
     conn.commit()
-    assert any("no longer exist" in m for m in _messages(verify_context))
+    warnings = _warn_messages(verify_context)
+    assert any("no longer exist" in m for m in warnings)
+    assert len(warnings) == 1
+
+
+def test_a_missing_file_with_no_md5_is_reported_in_both_categories(
+    verify_context, conn
+):
+    """Finding A: `missing` and `unconfirmed` are not mutually exclusive.
+
+    A row with a real `drive_file_id` that Drive no longer holds, and whose
+    `md5` was never confirmed, is a file that is both physically gone *and*
+    was never verified — two different problems calling for two different
+    fixes (re-upload vs. backfill an md5). Collapsing them into only the
+    milder "unconfirmed" category would hide the gone-ness from the
+    operator, defeating the point of an action whose only job is accurate
+    categorisation.
+    """
+    conn.execute(
+        "UPDATE media SET drive_file_id = 'gone', md5 = NULL WHERE id = 1"
+    )
+    conn.commit()
+    warnings = _warn_messages(verify_context)
+    assert any("no longer in Drive" in m for m in warnings)
+    assert any("never confirmed" in m for m in warnings)
+    assert len(warnings) == 2  # exactly these two categories, nothing else
+
+
+def test_report_shows_every_example_up_to_the_cap():
+    rows = [f"file-{i}.heic" for i in range(20)]
+    event = verify_library._report("thing(s)", rows, 0.5)
+    assert "more" not in event.message
+    assert all(row in event.message for row in rows)
+
+
+def test_report_truncates_and_counts_the_overflow():
+    rows = [f"file-{i}.heic" for i in range(21)]
+    event = verify_library._report("thing(s)", rows, 0.5)
+    assert "(+1 more)" in event.message
+    assert rows[-1] not in event.message  # the 21st row was not listed
+    assert all(row in event.message for row in rows[:20])
 
 
 def test_writes_nothing(verify_context, conn, drive):

@@ -79,15 +79,28 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     uploaded = list(ctx.conn.execute(
         "SELECT m.drive_file_id, m.md5, m.target_folder, m.target_name, e.name "
         "FROM media m JOIN entries e ON e.id = m.entry_id "
-        "WHERE m.upload_status = 'done'"
+        "WHERE m.upload_status = 'done' "
+        "ORDER BY e.name"
     ))
 
+    # `missing` and `unconfirmed` are not mutually exclusive: a row with a
+    # real `drive_file_id` but no confirmed `md5` still gets the live lookup,
+    # so it can land in both lists at once. `MediaRepo.mark_uploaded` always
+    # sets `drive_file_id` and `md5` together, so this split should never
+    # happen in normal use — but catching exactly the anomalies the app
+    # itself would never produce is this action's whole job, so the two
+    # problems (gone vs. never confirmed) must not be collapsed into one.
     missing, moved, mismatched, unconfirmed = [], [], [], []
     for row in uploaded:
-        if row["md5"] is None or row["drive_file_id"] is None:
+        if row["drive_file_id"] is None:
             unconfirmed.append(row["name"])
             continue
         found = live.get(row["drive_file_id"])
+        if row["md5"] is None:
+            if found is None:
+                missing.append(row["name"])
+            unconfirmed.append(row["name"])
+            continue
         if found is None:
             missing.append(row["name"])
             continue
@@ -101,7 +114,8 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         r["drive_id"] for r in ctx.conn.execute(
             "SELECT DISTINCT ft.drive_id FROM file_tags ft "
             "LEFT JOIN drive_files d ON d.drive_id = ft.drive_id "
-            "WHERE d.drive_id IS NULL"
+            "WHERE d.drive_id IS NULL "
+            "ORDER BY ft.drive_id"
         )
     ]
 
