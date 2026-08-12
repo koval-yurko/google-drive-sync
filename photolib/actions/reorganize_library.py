@@ -77,8 +77,12 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         )
         return
 
-    if params.confirm and not items.all(run_id, "dedupe") \
-            and not items.all(run_id, "repack"):
+    # A completed dry run always writes the "index" item (it is the one
+    # phase with no way to plan zero work), so its presence is the honest
+    # marker for "a plan exists for this run" — unlike checking dedupe and
+    # repack specifically, which are both legitimately empty for a library
+    # that is already tidy except for folders left to sweep.
+    if params.confirm and not items.all(run_id, "index"):
         yield ProgressEvent(
             "There is no plan for this run to confirm. Run Reorganize Folders "
             "without confirm first, read what it reports, then confirm that "
@@ -213,22 +217,49 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
 
     # ---- Repack (apply) ----------------------------------------------
     outstanding = items.pending(run_id, "repack")
+    if _cancelled(ctx):
+        return
     # Every folder that already exists under the root, plus whichever bucket
     # folders this plan's moves need and do not find. `ensure_folders` alone
     # only knows the destinations; a move's *source* folder is just as often
     # one nobody is arriving at this run, and apply_move needs both ids.
-    folder_ids = repack.folder_paths(ctx.drive, root.id)
-    folder_ids.update(repack.ensure_folders(
-        ctx.writer, root.id,
-        sorted({row["detail"]["to_folder"] for row in outstanding}),
-    ))
+    try:
+        folder_ids = repack.folder_paths(ctx.drive, root.id)
+        folder_ids.update(repack.ensure_folders(
+            ctx.writer, root.id,
+            sorted({row["detail"]["to_folder"] for row in outstanding}),
+        ))
+    except DriveError as exc:
+        yield ProgressEvent(
+            f"Cannot prepare destination folders: {exc}",
+            progress=_progress("repack", 0, 1), phase=_label("repack"),
+            level="error",
+        )
+        return
     for index, row in enumerate(outstanding, start=1):
         if _cancelled(ctx):
             return
         move = repack.Move(**row["detail"])
         try:
-            repack.apply_move(ctx.writer, ctx.conn, move, folder_ids)
-        except DriveError as exc:
+            move_folder_ids = folder_ids
+            if move.from_path not in folder_ids:
+                # A stale or unresolved parent_path: fall back to Drive's
+                # own record of this one file's current parent, exactly as
+                # this row would resolve it — not cached for any other row,
+                # since a shared parent_path is not a guarantee of a shared
+                # parent (see Task 15's review, which caught that caching
+                # bug for the same fallback in reorganize.py).
+                parents = ctx.drive.get_file(move.drive_id).parents
+                old_parent = parents[0] if parents else root.id
+                move_folder_ids = {**folder_ids, move.from_path: old_parent}
+            repack.apply_move(ctx.writer, ctx.conn, move, move_folder_ids)
+        except (DriveError, KeyError) as exc:
+            # KeyError is a backstop, not the primary path: an
+            # unresolvable from_path should be caught by the fallback
+            # above, but one file's stale catalog row must degrade to a
+            # single failed item, never a bare exception that kills the
+            # whole confirmed run and leaves every later item — including
+            # the entire Sweep phase — unprocessed.
             items.mark(run_id, "repack", row["item_key"], "failed",
                        {"error": str(exc)})
             yield ProgressEvent(f"{move.name}: {exc}",

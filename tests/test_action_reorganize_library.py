@@ -140,3 +140,146 @@ def test_cancellation_stops_between_items(reorg_context, conn, drive):
         reorg_context, reorganize_library.Params(confirm=True)
     ))
     assert drive.trashed == []
+
+
+def _make_ctx(conn, drive, tmp_path, run_id) -> ActionContext:
+    settings = SettingsRepo(conn)
+    settings.set_folder(PHOTOS_ROOT, FolderRef(id="photos", name="Photos"))
+    config = Config(
+        repo_root=tmp_path,
+        db_path=tmp_path / "t.db",
+        credentials_path=tmp_path / "c.json",
+        token_path=tmp_path / "t.json",
+        thumbnail_cache_dir=tmp_path / "thumbs",
+        downloads_dir=tmp_path / "downloads",
+    )
+    return ActionContext(
+        conn=conn, drive=drive, settings=settings, config=config, writer=drive,
+        run_id=run_id,
+    )
+
+
+def test_a_stale_source_folder_does_not_abort_the_confirmed_run(conn, tmp_path):
+    """Regression coverage for reviewer Finding A.
+
+    A repack move whose persisted `from_path` no longer resolves — neither
+    via the live folder tree nor via Drive's own record of the file's
+    current parent, because the file itself is gone too — must degrade to
+    one failed item, not a bare `KeyError` that kills the whole confirmed
+    run and leaves every later item, including the entire Sweep phase,
+    unprocessed. Modeled on `tests/test_action_reorganize_stale_parent.py`,
+    the equivalent regression for the older `reorganize` action.
+    """
+    drive = FakeDrive()
+    drive.add_folder("photos", "Photos")
+    drive.add_folder("f-real", "actual-folder", parent="photos")
+    drive.add_file("a", "IMG_A.HEIC", b"a", parent="f-real")
+    drive.add_file("b", "IMG_B.HEIC", b"b", parent="f-real")
+    run_id = "run-stale"
+    ctx = _make_ctx(conn, drive, tmp_path, run_id)
+
+    # A persisted plan as if a prior dry run had written it: two ordinary
+    # moves, and one ("z") whose folder and file both vanished from Drive
+    # between planning and confirming — its from_path is absent from the
+    # live folder tree, and the get_file fallback for it fails too.
+    items = JobItemsRepo(conn)
+    items.put(run_id, "index", "photos", run_id, "done", {"files": 2})
+    for drive_id, name, from_path in (
+        ("a", "IMG_A.HEIC", "actual-folder"),
+        ("b", "IMG_B.HEIC", "actual-folder"),
+        ("z", "IMG_Z.HEIC", "gone-folder"),
+    ):
+        items.put(run_id, "repack", drive_id, run_id, "pending", {
+            "drive_id": drive_id, "name": name, "new_name": name,
+            "from_path": from_path, "to_folder": "unknown-date",
+        })
+
+    events = list(reorganize_library.run(
+        ctx, reorganize_library.Params(confirm=True)
+    ))
+
+    failed = JobItemsRepo(conn).all(run_id, "repack", "failed")
+    done = JobItemsRepo(conn).all(run_id, "repack", "done")
+    assert [row["item_key"] for row in failed] == ["z"]
+    assert {row["item_key"] for row in done} == {"a", "b"}
+    assert "f-real" not in drive.get_file("a").parents
+    assert "f-real" not in drive.get_file("b").parents
+    error_events = [e for e in events if e.level == "error"]
+    assert len(error_events) == 1
+    assert "IMG_Z.HEIC" in error_events[0].message
+    # Sweep still ran (a and b vacated actual-folder, emptying it) — the
+    # run did not die on z's failure.
+    assert any(e.phase and e.phase.startswith("Sweep") for e in events)
+    assert "f-real" in drive.trashed
+    assert events[-1].level != "error"
+
+
+def test_confirm_reaches_sweep_when_dedupe_and_repack_plan_nothing(
+    conn, tmp_path
+):
+    """Regression coverage for reviewer Finding B.
+
+    A library with nothing to dedupe and nothing to repack still writes no
+    rows for either phase, so gating the confirm refusal on those two
+    phases specifically would wrongly refuse the one run where Sweep is
+    the only work left. The "index" item, which a completed dry run always
+    writes, is the honest marker instead.
+    """
+    drive = FakeDrive()
+    drive.add_folder("photos", "Photos")
+    drive.add_folder("f-empty", "empty-only", parent="photos")
+    run_id = "run-empty-plan"
+    ctx = _make_ctx(conn, drive, tmp_path, run_id)
+
+    list(reorganize_library.run(ctx, reorganize_library.Params()))
+    items = JobItemsRepo(conn)
+    assert items.all(run_id, "dedupe") == []
+    assert items.all(run_id, "repack") == []
+    assert items.all(run_id, "index")
+
+    events = list(reorganize_library.run(
+        ctx, reorganize_library.Params(confirm=True)
+    ))
+
+    assert not any(e.level == "error" for e in events)
+    assert any(e.phase and e.phase.startswith("Sweep") for e in events)
+    assert "f-empty" in drive.trashed
+
+
+def test_cancellation_before_repack_creates_no_bucket_folder(
+    conn, tmp_path, monkeypatch
+):
+    """Regression coverage for reviewer Finding C (minor).
+
+    `ensure_folders` is a real Drive write. Cancellation landing between
+    Dedupe finishing and Repack starting must be caught before that write,
+    not only inside the per-move loop after it.
+    """
+    drive = FakeDrive()
+    drive.add_folder("photos", "Photos")
+    drive.add_folder("misfiled", "misfiled", parent="photos")
+    drive.add_file("only", "IMG_ONLY.HEIC", b"only", parent="misfiled")
+    run_id = "run-cancel-boundary"
+    ctx = _make_ctx(conn, drive, tmp_path, run_id)
+    ctx.cancelled = threading.Event()
+
+    list(reorganize_library.run(ctx, reorganize_library.Params()))
+    assert JobItemsRepo(conn).pending(run_id, "repack")  # one move is planned
+
+    real_pending = JobItemsRepo.pending
+
+    def cancel_when_repack_is_fetched(self, run_id_arg, phase):
+        if phase == "repack":
+            ctx.cancelled.set()
+        return real_pending(self, run_id_arg, phase)
+
+    monkeypatch.setattr(JobItemsRepo, "pending", cancel_when_repack_is_fetched)
+
+    before = {f.name for f in drive.list_children("photos", folders_only=True)}
+    list(reorganize_library.run(
+        ctx, reorganize_library.Params(confirm=True)
+    ))
+    after = {f.name for f in drive.list_children("photos", folders_only=True)}
+
+    assert after == before  # no "unknown-date" bucket folder was created
+    assert drive.moves == []
