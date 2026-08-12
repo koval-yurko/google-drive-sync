@@ -42,6 +42,16 @@ ARCHIVE = {
 
 
 @pytest.fixture
+def archive_content() -> dict:
+    """Entry name -> raw bytes, mirroring the archive `ctx` was built from.
+
+    The zip builder already holds these bytes; return them rather than
+    re-inflating the archive `ctx` built.
+    """
+    return {name.rsplit("/", 1)[-1]: content for name, content in ARCHIVE.items()}
+
+
+@pytest.fixture
 def ctx(tmp_path, monkeypatch):
     monkeypatch.setenv("PHOTOLIB_HOME", str(tmp_path))
     monkeypatch.delenv("GOOGLE_MAPS_API_KEY", raising=False)
@@ -279,3 +289,43 @@ def test_a_failed_transfer_leaves_no_ghost(ctx, monkeypatch):
     list(run(ctx, Params(workers=1)))
 
     assert registry.snapshot() == []
+
+
+def test_skip_rows_are_never_uploaded(ctx):
+    repo = MediaRepo(ctx.conn)
+    for row in repo.all_media():
+        repo.set_plan(
+            row["entry_id"], plan_verdict="skip", plan_match="drive-existing"
+        )
+    events = list(run(ctx, Params()))
+    assert any("Nothing to upload" in e.message for e in events)
+
+
+def test_verify_row_matching_drive_is_marked_done_against_that_file(
+    ctx, archive_content
+):
+    """The bytes came down to prove identity; none went up."""
+    repo = MediaRepo(ctx.conn)
+    rows = repo.all_media()
+    row, others = rows[0], rows[1:]
+    # Isolate the row under test — `sessions_started == 0` should mean
+    # nothing at all opened a session, not just this particular row.
+    for other in others:
+        repo.set_plan(other["entry_id"], plan_verdict="skip", plan_match=None)
+
+    twin_md5 = hashlib.md5(archive_content[row["name"]]).hexdigest()
+    ctx.conn.execute(
+        "INSERT INTO drive_files "
+        "(drive_id, name, parent_path, md5, size, mime_type) "
+        "VALUES ('drive-twin', ?, '2025-01', ?, ?, 'image/heic')",
+        (row["name"], twin_md5, row["entry_size"]),
+    )
+    ctx.conn.commit()
+    repo.set_plan(row["entry_id"], plan_verdict="verify", plan_match="drive-twin")
+
+    list(run(ctx, Params()))
+
+    after = next(r for r in repo.all_media() if r["entry_id"] == row["entry_id"])
+    assert after["upload_status"] == "done"
+    assert after["drive_file_id"] == "drive-twin"
+    assert ctx.drive.sessions_started == 0

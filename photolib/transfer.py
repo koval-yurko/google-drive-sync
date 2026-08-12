@@ -49,6 +49,8 @@ class TransferResult:
     drive_file_id: str
     md5: str
     size: int
+    adopted: bool = False
+    """True when the file was already in Drive and no bytes were uploaded."""
 
 
 class TransferError(Exception):
@@ -201,6 +203,8 @@ def transfer_entry(
     on_session: Callable[[str], None] | None = None,
     on_spool: Callable[[Path], None] | None = None,
     on_progress: Callable[[int], None] | None = None,
+    skip_if_md5: str | None = None,
+    adopt_id: str | None = None,
 ) -> TransferResult:
     """Move one entry into `parent_id` as `name`. Raises TransferError."""
     spool_dir.mkdir(parents=True, exist_ok=True)
@@ -211,6 +215,16 @@ def transfer_entry(
     try:
         spool_entry(read_range, entry, spooled)
         local_md5 = file_md5(spooled)
+
+        if skip_if_md5 is not None and adopt_id is not None:
+            if local_md5 == skip_if_md5:
+                # The bytes are already in Drive under `adopt_id`. Downloading
+                # was the only way to know; uploading them again would be
+                # pure waste. The `finally` below deletes the spool.
+                return TransferResult(
+                    drive_file_id=adopt_id, md5=local_md5,
+                    size=entry.size, adopted=True,
+                )
 
         offset = 0
         if session_uri:

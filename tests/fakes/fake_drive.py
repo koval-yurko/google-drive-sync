@@ -38,6 +38,7 @@ class FakeDrive:
         self.trashed: list[str] = []
         self.corrupt_next_upload = False
         self.fail_chunks = 0
+        self.sessions_started = 0
 
     def _next_id(self, prefix: str) -> str:
         return f"{prefix}{next(self._ids)}"
@@ -184,6 +185,7 @@ class FakeDrive:
     ) -> str:
         if parent_id not in self._files:
             raise NotFoundError(f"no such parent: {parent_id}")
+        self.sessions_started += 1
         uri = f"https://upload.fake/session/{self._next_id('s')}"
         self._sessions[uri] = _Session(parent_id, name, size, dict(properties))
         return uri

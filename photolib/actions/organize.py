@@ -197,6 +197,12 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
                     path=path,
                 ),
                 on_progress=lambda offset: inflight.uploaded(key, offset),
+                skip_if_md5=(
+                    row["match_md5"] if row["plan_verdict"] == "verify" else None
+                ),
+                adopt_id=(
+                    row["plan_match"] if row["plan_verdict"] == "verify" else None
+                ),
             )
         finally:
             inflight.finish(key)
@@ -230,19 +236,25 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
                 repo.mark_uploaded(
                     row["entry_id"], result.drive_file_id, result.md5
                 )
-                # The Library browses drive_files; record the arrival so it
-                # is visible without waiting for the next Scan.
-                scans.record_drive_file(
-                    drive_id=result.drive_file_id,
-                    name=row["target_name"],
-                    parent_path=row["target_folder"],
-                    md5=result.md5,
-                    size=result.size,
-                    mime_type=mime_for(row["target_name"]),
-                )
+                if result.adopted:
+                    message = (
+                        f"{row['name']}: already in Drive, verified by MD5 — "
+                        "not uploaded."
+                    )
+                else:
+                    # The Library browses drive_files; record the arrival so it
+                    # is visible without waiting for the next Scan.
+                    scans.record_drive_file(
+                        drive_id=result.drive_file_id,
+                        name=row["target_name"],
+                        parent_path=row["target_folder"],
+                        md5=result.md5,
+                        size=result.size,
+                        mime_type=mime_for(row["target_name"]),
+                    )
+                    message = f"{row['target_folder']}/{row['target_name']}"
                 uploaded += 1
                 level = "info"
-                message = f"{row['target_folder']}/{row['target_name']}"
 
             done_bytes += row["size"]
             yield ProgressEvent(
