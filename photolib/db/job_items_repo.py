@@ -2,9 +2,21 @@
 
 One row per unit of work, keyed by (run_id, phase, item_key). A phase
 enumerates its work here and processes only what `pending()` returns, so a
-resumed run never repeats finished work. The same table doubles as a
-persisted dry-run plan: `detail` holds the JSON of an intended operation,
-and confirming reads it back instead of re-planning.
+resumed run never repeats work already marked `done`. The same table doubles
+as a persisted dry-run plan: `detail` holds the JSON of an intended
+operation, and confirming reads it back instead of re-planning.
+
+**At-least-once, not exactly-once.** A caller applies an item's effect —
+almost always a Google Drive API call — and only afterward calls `mark(...,
+"done")` here. Those two things cannot share a transaction: one is a network
+mutation, the other a local SQLite write, and this connection runs in
+autocommit anyway (`catalog.connect` sets `isolation_level = None`), so there
+is no transaction to share even locally. If the process dies between the two,
+the item is still `pending` (or `failed`) and `pending()` hands it back on
+resume, so its effect runs again. Every effect this table checkpoints must
+therefore tolerate being applied twice — treat "already in the target state"
+as success rather than erroring or corrupting local state. `dedupe.py` and
+`repack.py` document how each of their effects meets that bar.
 """
 
 from __future__ import annotations

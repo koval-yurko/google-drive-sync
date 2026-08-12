@@ -110,7 +110,9 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
                 parents = ctx.drive.get_file(move.drive_id).parents
                 old_parent = parents[0] if parents else photos_root.id
                 move_folder_ids = {**folder_ids, move.from_path: old_parent}
-            repack.apply_move(ctx.writer, ctx.conn, move, move_folder_ids)
+            repack.apply_move(
+                ctx.writer, ctx.conn, move, move_folder_ids, drive=ctx.drive
+            )
         except DriveError as exc:
             failed += 1
             yield ProgressEvent(f"{move.name}: {exc}", level="error")

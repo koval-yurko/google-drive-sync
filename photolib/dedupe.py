@@ -92,6 +92,14 @@ def apply_removal(
 
     `stamp` lets a caller trashing a whole batch record one shared
     `trashed_at` for all of them; `None` means "now".
+
+    Safe to replay: Drive's trash guide says a trashed file stays retrievable
+    by `files.get` — and therefore still patchable — until it is
+    auto-deleted 30 days later
+    (https://developers.google.com/workspace/drive/api/guides/delete), so
+    setting `trashed: true` on a file that is already trashed is just
+    resetting a field to the value it already has, not an error. The
+    `UPDATE` below is an ordinary overwrite, harmless to repeat.
     """
     writer.trash(removal.drive_id)
     if stamp is None:

@@ -203,12 +203,33 @@ is absent). Every job records it. Resuming creates a *new* job with the *same*
 
 **The contract.** Each phase enumerates its work as `job_items` rows keyed by a
 stable identity — Drive file id, `entries.id`, `archives.drive_id` — and
-processes only the rows that are not `done`. An item is flipped to `done` in
-the same transaction that records its effect, or to `failed` with the error in
-`detail`. `item_key` must be stable across runs; a row index is not an
-acceptable key.
+processes only the rows that are not `done`. An item's effect is applied and
+then, in a second, separate step, the row is flipped to `done` — or to
+`failed` with the error in `detail`. `item_key` must be stable across runs;
+a row index is not an acceptable key.
 
-That is the whole "never repeat the same work" guarantee, and it now covers
+**This is at-least-once, not exactly-once, and deliberately so.** An item's
+effect is a Google Drive API call; the checkpoint that marks it `done` is a
+local SQLite write. No transaction spans both — they are two different
+systems connected by a network, and a process can die in the gap between
+them. (SQLite itself is not even transactional here: `catalog.py` opens the
+connection with `isolation_level = None`, autocommit, so every statement,
+including the checkpoint write, commits the instant it runs.) When that
+happens, resume replays the item: it is still `pending`, so it is retried,
+and its effect is applied again. The guarantee this table actually provides
+is narrower than "never repeat the same work" — it is "never repeat work
+whose effect is not safe to repeat." That pushes the real obligation onto
+each phase's effect, not onto the checkpoint: **every effect a phase applies
+must be idempotent, or tolerant of being applied twice** — trashing a file
+already trashed, reparenting a file already in its target folder — so that
+a replay converges on the same end state instead of erroring or corrupting
+it. See `photolib/db/job_items_repo.py`'s module docstring for the same
+contract stated where an implementer meets it, and `photolib/repack.py`'s
+`apply_move` for a concrete instance (Drive's `files.update` reference does
+not document what happens when `removeParents` names a parent the file no
+longer has, so the code no longer depends on guessing that answer).
+
+That is the whole "never repeat unsafe work" guarantee, and it now covers
 every phase rather than only uploads.
 
 **The plan is the checkpoint** — for Reorganize. Its Dedupe, Repack and Sweep
