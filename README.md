@@ -105,25 +105,39 @@ through.
 | Plan Organization | Resolves dates, countries, duplicate verdicts, destinations | No |
 | Organize Photos | Uploads every planned file into its destination bucket folder | Yes |
 | Repack Buckets | Moves every indexed file into its bucket folder, trashing what's left empty | Yes |
+| Clear Stale Trees | Moves a redundant extracted tree to Drive's trash | Yes |
 | Clear Duplicates | Trashes byte-identical copies inside the Global Photos folder, keeping one | Yes |
 | Sync Tags to Drive | Mirrors tags onto each file's `appProperties` | Yes |
-| Clear Stale Trees | Moves a redundant extracted tree to Drive's trash | Yes |
 | Verify Library | Compares the catalog against what Drive actually holds and reports drift | No |
 
 ## Resuming and cancelling
 
-Long-running phases checkpoint their work as they go rather than trusting a
-run to finish in one sitting. Reorganize Folders' five phases, and the plan
-Sync from Archives produces, record one `job_items` row per file or folder,
-marked `done` (or `failed`, or `skipped`) the moment it is — the dry-run plan
-lives in the same table, so confirming acts on exactly what was reported
-instead of re-planning. Organize's Upload phase checkpoints the same way but
-per file in the `media` table instead (see "Running the migration", below).
+The two flows checkpoint differently, matched to how expensive each phase is
+to redo.
+
+Reorganize Folders' five phases record their work in `job_items` — one row
+per file for Enrich, Dedupe and Repack, one row for the whole folder for
+Index — marked `done` (or `failed`, or `skipped`) as it happens. Dedupe's
+and Repack's plans live there too, and confirming applies exactly what was
+reported rather than recomputing it.
+
+Sync from Archives doesn't need that: its four read-only phases (Connect,
+Scan, Pair, Plan) are cheap enough to simply re-run in full every time —
+Scan skips any archive whose index is already current, and Plan clears and
+recomputes the whole per-file plan into the `media` table on every pass, so
+there is nothing to check before redoing it. The one `job_items` row Sync
+writes is a sentinel with no per-file detail; its only job is telling a
+confirm run "the plan you read exists" from "there is no plan to confirm
+yet." Upload — the phase that actually writes to Drive, and the one place a
+Sync run genuinely resumes rather than starts over — checkpoints per file in
+the `media` table instead (`upload_status`, `upload_session_uri`; see
+"Running the migration", below), not in `job_items`.
 
 **Cancel** (`POST /api/jobs/{id}/cancel`) stops the job at the next item
-boundary, not mid-item, and leaves its checkpoints exactly as they were.
-**Resume** (`POST /api/jobs/{id}/resume`) starts a new job on the same run;
-whichever checkpoints already say `done` are skipped, so a cancelled or
+boundary, not mid-item, and leaves whatever it had checkpointed — in
+`job_items` or in `media`, whichever that phase uses — exactly as it was.
+**Resume** (`POST /api/jobs/{id}/resume`) starts a new job on the same run:
+work that checkpoint already shows as done is skipped, so a cancelled or
 failed job picks up close to where it left off rather than starting over.
 
 There is no automatic resume on restart: nothing watches for a run the
@@ -183,8 +197,12 @@ are never touched.
 ## Browsing and tagging
 
 The Library page shows what Drive actually holds under `photos_root`, grouped
-by month. It is built from the last Scan, so re-run Scan after an Organize to
-see new files. Thumbnails come from Drive's own renderer through a local disk
+by month, from the `drive_files` table. Organize keeps it current on its own:
+it records each newly uploaded file the moment it lands, and a file it adopts
+instead of uploading was already indexed by an earlier Scan — so there is
+nothing to re-run just to see the result of a Sync. Re-run Scan (or
+Reorganize Folders' Index phase) to pick up anything that changed in Drive
+some other way. Thumbnails come from Drive's own renderer through a local disk
 cache in `.cache/thumbnails` — Chrome cannot display HEIC, and 591 of these
 files are HEIC. Videos play in Drive's embedded preview, which handles the
 HEVC `.MOV` files browsers refuse.
