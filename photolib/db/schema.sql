@@ -113,7 +113,11 @@ CREATE TABLE IF NOT EXISTS drive_files (
     trashed_at  TEXT,
     mime_type   TEXT,
     synced_tags TEXT,
-    capture_hint INTEGER
+    capture_hint INTEGER,
+    country      TEXT,
+    latitude     REAL,
+    longitude    REAL,
+    metadata_source TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_drive_files_name ON drive_files(name);

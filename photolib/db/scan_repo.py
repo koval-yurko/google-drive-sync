@@ -177,6 +177,36 @@ class ScanRepo:
                 )
             }
 
+    def set_enrichment(
+        self,
+        drive_id: str,
+        *,
+        capture_hint: int | None,
+        latitude: float | None,
+        longitude: float | None,
+        country: str | None,
+        metadata_source: str,
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE drive_files SET capture_hint = COALESCE(?, capture_hint), "
+                "latitude = ?, longitude = ?, country = ?, metadata_source = ? "
+                "WHERE drive_id = ?",
+                (capture_hint, latitude, longitude, country,
+                 metadata_source, drive_id),
+            )
+            self._conn.commit()
+
+    def unenriched(self) -> list[sqlite3.Row]:
+        """Live files Enrich has never looked at."""
+        with self._lock:
+            return list(
+                self._conn.execute(
+                    "SELECT * FROM drive_files "
+                    "WHERE trashed_at IS NULL AND metadata_source IS NULL"
+                )
+            )
+
     # ---------- reporting ----------
 
     def counts(self) -> dict[str, int]:
