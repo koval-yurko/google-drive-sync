@@ -75,13 +75,21 @@ class JobRunner:
         try:
             spec = registry.get_action(job.action)
             params = spec.params_model.model_validate(job.params)
-            for event in spec.run(self._context_factory(), params):
+            ctx = self._context_factory()
+            ctx.run_id = job.run_id
+            ctx.cancelled = threading.Event()
+            for event in spec.run(ctx, params):
                 self._repo.add_event(job_id, event.level, event.message)
                 if event.progress is not None:
-                    self._repo.update_progress(job_id, event.progress, event.message)
+                    self._repo.update_progress(
+                        job_id, event.progress, event.message,
+                        phase=event.phase, done=event.done, total=event.total,
+                    )
                 self._emit(job_id, {
                     "type": "event", "level": event.level,
                     "message": event.message, "progress": event.progress,
+                    "phase": event.phase, "done": event.done,
+                    "total": event.total,
                 })
             self._repo.mark_done(job_id)
             self._emit(job_id, {"type": "status", "status": "done"})

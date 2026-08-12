@@ -117,3 +117,43 @@ def test_stop_then_start_again_works(conn):
         assert repo.get(job.id).status == "done"
     finally:
         r.stop()
+
+
+def test_phase_and_item_counts_reach_the_job_row(runner, conn, monkeypatch):
+    from photolib.actions import registry
+
+    def phased(ctx, params):
+        yield ProgressEvent("starting", progress=0.1, phase="Scan (1/2)",
+                            done=1, total=4)
+        yield ProgressEvent("finishing", progress=0.9, phase="Upload (2/2)",
+                            done=4, total=4)
+
+    spec = registry.get_action("check_connection")
+    monkeypatch.setattr(spec, "run", phased)
+    monkeypatch.setattr(registry, "get_action", lambda _id: spec)
+
+    job = runner.submit("check_connection", {})
+    runner.wait_idle()
+    reloaded = JobsRepo(conn).get(job.id)
+    assert reloaded.phase == "Upload (2/2)"
+    assert (reloaded.items_done, reloaded.items_total) == (4, 4)
+
+
+def test_run_id_reaches_the_action(runner, conn, monkeypatch):
+    from photolib.actions import registry
+
+    seen = {}
+
+    def peek(ctx, params):
+        seen["run_id"] = ctx.run_id
+        seen["cancellable"] = ctx.cancelled is not None
+        yield ProgressEvent("ok", progress=1.0)
+
+    spec = registry.get_action("check_connection")
+    monkeypatch.setattr(spec, "run", peek)
+    monkeypatch.setattr(registry, "get_action", lambda _id: spec)
+
+    job = runner.submit("check_connection", {})
+    runner.wait_idle()
+    assert seen["run_id"] == JobsRepo(conn).get(job.id).run_id
+    assert seen["cancellable"] is True

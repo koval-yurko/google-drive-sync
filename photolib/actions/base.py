@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from dataclasses import dataclass
 from typing import Callable, Iterator
 
@@ -25,6 +26,11 @@ class ProgressEvent:
     message: str
     progress: float | None = None
     level: str = "info"
+    phase: str | None = None
+    """Display name of the phase, e.g. 'Upload (5/5)'. None outside a flow."""
+    done: int | None = None
+    total: int | None = None
+    """Items finished and items declared, for the phase in progress."""
 
 
 @dataclass
@@ -39,6 +45,10 @@ class ActionContext:
     """Whatever may mutate Drive. None in a read-only context."""
     inflight: object | None = None
     """Where live transfers report themselves. None when nobody is watching."""
+    run_id: str | None = None
+    """Identity of this flow run; the key `job_items` are stored under."""
+    cancelled: threading.Event | None = None
+    """Set when the operator cancels. None outside a job."""
 
 
 @dataclass
