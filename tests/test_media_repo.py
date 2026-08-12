@@ -6,6 +6,22 @@ from photolib.db.media_repo import MediaRepo
 
 
 @pytest.fixture
+def seeded_entry(conn):
+    conn.execute(
+        "INSERT INTO archives (drive_id, name, size) VALUES ('z1', 'a.zip', 10)"
+    )
+    conn.execute(
+        "INSERT INTO entries (archive_id, path, name, crc32, size, compressed_size,"
+        " method, local_header_offset, kind)"
+        " VALUES (1, 'd/a.heic', 'a.heic', 1, 10, 5, 8, 0, 'media')"
+    )
+    conn.commit()
+    entry_id = conn.execute("SELECT id FROM entries").fetchone()["id"]
+    MediaRepo(conn).upsert_media(entry_id)
+    return entry_id
+
+
+@pytest.fixture
 def seeded(conn):
     conn.execute(
         "INSERT INTO archives (drive_id, name, size) VALUES ('z1', 'a.zip', 10)"
@@ -119,3 +135,50 @@ def test_unpaired_sidecars(seeded):
     repo.upsert_media(1)
     repo.link_sidecar(1, 1)
     assert repo.unpaired_sidecars() == []
+
+
+def test_skipped_rows_are_not_offered_for_upload(conn, seeded_entry):
+    repo = MediaRepo(conn)
+    repo.set_plan(seeded_entry, target_folder="2025-01", target_name="a.heic",
+                  plan_verdict="skip", plan_match="drive-1")
+    assert repo.pending_uploads() == []
+
+
+def test_verify_rows_are_offered_with_the_match_md5(conn, seeded_entry):
+    conn.execute(
+        "INSERT INTO drive_files (drive_id, name, parent_path, md5, size) "
+        "VALUES ('drive-9', 'a.heic', '2025-01', 'abc123', 3)"
+    )
+    conn.commit()
+    repo = MediaRepo(conn)
+    repo.set_plan(seeded_entry, target_folder="2025-01",
+                  target_name="a~0000ff.heic", plan_verdict="verify",
+                  plan_match="drive-9")
+    row = repo.pending_uploads()[0]
+    assert row["plan_verdict"] == "verify"
+    assert row["match_md5"] == "abc123"
+
+
+def test_summary_separates_skipped_from_pending(conn, seeded_entry):
+    repo = MediaRepo(conn)
+    repo.set_plan(seeded_entry, target_folder="2025-01", target_name="a.heic",
+                  plan_verdict="skip", plan_match="drive-1")
+    summary = repo.summary()
+    assert summary["skipped"] == 1
+    assert summary["pending"] == 0
+
+
+def test_verified_by_crc_keys_on_crc_and_size(conn, seeded_entry):
+    repo = MediaRepo(conn)
+    repo.mark_uploaded(seeded_entry, "drive-7", "deadbeef")
+    key = next(iter(repo.verified_by_crc()))
+    assert isinstance(key, tuple) and len(key) == 2
+    assert repo.verified_by_crc()[key]["drive_file_id"] == "drive-7"
+
+
+def test_clear_plan_resets_the_verdict(conn, seeded_entry):
+    repo = MediaRepo(conn)
+    repo.set_plan(seeded_entry, plan_verdict="skip", plan_match="drive-1")
+    repo.clear_plan()
+    row = repo.all_media()[0]
+    assert row["plan_verdict"] is None and row["plan_match"] is None

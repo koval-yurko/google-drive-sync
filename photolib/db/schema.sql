@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS media (
     target_name      TEXT,
     duplicate_of     TEXT,
     duplicate_reason TEXT,
+    plan_verdict     TEXT,
+    plan_match       TEXT,
     upload_status    TEXT NOT NULL DEFAULT 'pending'
                      CHECK (upload_status IN ('pending', 'done', 'error')),
     drive_file_id    TEXT,

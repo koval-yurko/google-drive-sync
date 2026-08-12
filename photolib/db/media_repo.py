@@ -19,6 +19,7 @@ _PLAN_FIELDS = (
     "capture_time", "capture_source", "latitude", "longitude",
     "country", "target_folder", "target_name",
     "duplicate_of", "duplicate_reason",
+    "plan_verdict", "plan_match",
 )
 
 _MEDIA_SELECT = """
@@ -33,13 +34,16 @@ _UPLOAD_SELECT = """
     SELECT m.id AS media_id, m.entry_id, m.target_folder, m.target_name,
            m.capture_time, m.country, m.upload_status,
            m.upload_session_uri, m.upload_offset, m.session_started_at,
-           m.attempts,
+           m.attempts, m.plan_verdict, m.plan_match,
+           m.drive_file_id, m.md5,
            e.path, e.name, e.crc32, e.size, e.compressed_size,
            e.method, e.local_header_offset,
-           a.drive_id AS archive_drive_id, a.name AS archive_name
+           a.drive_id AS archive_drive_id, a.name AS archive_name,
+           df.md5 AS match_md5
     FROM media m
     JOIN entries e ON e.id = m.entry_id
     JOIN archives a ON a.id = e.archive_id
+    LEFT JOIN drive_files df ON df.drive_id = m.plan_match
 """
 
 
@@ -132,7 +136,13 @@ class MediaRepo:
             "unplanned": media - planned,
             "duplicates": one("SELECT COUNT(*) FROM media WHERE duplicate_of IS NOT NULL"),
             "with_sidecar": one("SELECT COUNT(*) FROM media WHERE sidecar_id IS NOT NULL"),
-            "pending": one("SELECT COUNT(*) FROM media WHERE upload_status = 'pending'"),
+            "pending": one(
+                "SELECT COUNT(*) FROM media WHERE upload_status = 'pending' "
+                "AND COALESCE(plan_verdict, 'upload') != 'skip'"
+            ),
+            "skipped": one(
+                "SELECT COUNT(*) FROM media WHERE plan_verdict = 'skip'"
+            ),
             "uploaded": one("SELECT COUNT(*) FROM media WHERE upload_status = 'done'"),
             "errors": one("SELECT COUNT(*) FROM media WHERE upload_status = 'error'"),
         }
@@ -148,6 +158,7 @@ class MediaRepo:
         sql = (
             f"{_UPLOAD_SELECT} WHERE m.upload_status IN ({placeholders}) "
             "AND m.target_folder IS NOT NULL "
+            "AND COALESCE(m.plan_verdict, 'upload') != 'skip' "
             "ORDER BY a.name, e.local_header_offset"
         )
         args: list = list(statuses)
@@ -204,3 +215,16 @@ class MediaRepo:
             "AND m.drive_file_id IS NOT NULL AND m.md5 IS NOT NULL"
         )
         return {row["name"]: row for row in rows}
+
+    def verified_by_crc(self) -> dict[tuple[int, int], sqlite3.Row]:
+        """Verified uploads keyed by (crc32, uncompressed size).
+
+        The bridge between a ZIP entry, which only knows CRC32, and Drive,
+        which only knows MD5: these are bytes this app itself uploaded and
+        Drive confirmed, so their identity is settled without a download.
+        """
+        rows = self._conn.execute(
+            f"{_UPLOAD_SELECT} WHERE m.upload_status = 'done' "
+            "AND m.drive_file_id IS NOT NULL AND m.md5 IS NOT NULL"
+        )
+        return {(row["crc32"], row["size"]): row for row in rows}

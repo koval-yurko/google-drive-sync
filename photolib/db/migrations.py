@@ -32,6 +32,8 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("jobs", "phase", "phase TEXT"),
     ("jobs", "items_done", "items_done INTEGER NOT NULL DEFAULT 0"),
     ("jobs", "items_total", "items_total INTEGER NOT NULL DEFAULT 0"),
+    ("media", "plan_verdict", "plan_verdict TEXT"),
+    ("media", "plan_match", "plan_match TEXT"),
 )
 
 # (table, column) pairs retired from the schema. SQLite 3.35+ supports
