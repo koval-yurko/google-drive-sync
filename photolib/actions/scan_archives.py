@@ -13,6 +13,7 @@ from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.db.scan_repo import ScanRepo
 from photolib.db.settings_repo import PHOTOS_ROOT, ZIP_SOURCE
 from photolib.drive.errors import DriveError
+from photolib.scan import index_destination
 
 ID = "scan_archives"
 TITLE = "Scan Archives"
@@ -29,26 +30,7 @@ class Params(ActionParams):
 
 def _index_destination(ctx: ActionContext, folder_id: str) -> int:
     """Walk the destination at any depth and return how many files were seen."""
-    rows: list[dict] = []
-    stack: list[tuple[str, str]] = [(folder_id, "")]
-    while stack:
-        current, path = stack.pop()
-        for child in ctx.drive.list_children(current):
-            if child.is_folder:
-                stack.append(
-                    (child.id, f"{path}/{child.name}" if path else child.name)
-                )
-                continue
-            rows.append(
-                {
-                    "drive_id": child.id, "name": child.name,
-                    "parent_path": path, "md5": child.md5,
-                    "size": child.size, "mime_type": child.mime_type,
-                    "capture_hint": child.capture_hint(),
-                }
-            )
-    ScanRepo(ctx.conn).upsert_drive_files(rows)
-    return len(rows)
+    return index_destination(ctx.drive, ctx.conn, folder_id)
 
 
 def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:

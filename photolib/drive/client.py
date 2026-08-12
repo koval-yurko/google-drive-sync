@@ -18,7 +18,7 @@ API_ROOT = "https://www.googleapis.com/drive/v3"
 FOLDER_MIME = "application/vnd.google-apps.folder"
 FILE_FIELDS = (
     "id,name,mimeType,size,md5Checksum,createdTime,modifiedTime,parents,"
-    "thumbnailLink,imageMediaMetadata(time)"
+    "thumbnailLink,imageMediaMetadata(time,location),appProperties"
 )
 
 # Drive's thumbnailLink ends in a size directive: .../abc=s220. Swapping it is
@@ -39,6 +39,7 @@ class DriveFile(BaseModel):
     image_media_metadata: dict | None = Field(
         default=None, alias="imageMediaMetadata"
     )
+    app_properties: dict | None = Field(default=None, alias="appProperties")
 
     model_config = {"populate_by_name": True}
 
@@ -70,6 +71,14 @@ class DriveFile(BaseModel):
             except ValueError:
                 continue
         return None
+
+    def location(self) -> tuple[float, float] | None:
+        """EXIF coordinates, or None. (0, 0) is Drive's way of saying nothing."""
+        loc = (self.image_media_metadata or {}).get("location") or {}
+        lat, lon = loc.get("latitude"), loc.get("longitude")
+        if lat is None or lon is None or (lat == 0 and lon == 0):
+            return None
+        return float(lat), float(lon)
 
 
 class DriveClient:

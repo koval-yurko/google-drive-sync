@@ -300,3 +300,32 @@ def test_capture_hint_survives_malformed_exif():
 
 def test_capture_hint_of_an_undated_file_is_none():
     assert DriveFile(id="x", name="a", mimeType="image/heic").capture_hint() is None
+
+
+def test_location_reads_image_metadata():
+    from photolib.drive.client import DriveFile
+
+    file = DriveFile(
+        id="f", name="a.heic", mimeType="image/heic",
+        imageMediaMetadata={"location": {"latitude": 37.9, "longitude": 23.7}},
+    )
+    assert file.location() == (37.9, 23.7)
+
+
+def test_location_is_none_when_absent_or_null_island():
+    from photolib.drive.client import DriveFile
+
+    bare = DriveFile(id="f", name="a.heic", mimeType="image/heic")
+    assert bare.location() is None
+    zeroed = DriveFile(
+        id="f", name="a.heic", mimeType="image/heic",
+        imageMediaMetadata={"location": {"latitude": 0.0, "longitude": 0.0}},
+    )
+    assert zeroed.location() is None
+
+
+def test_file_fields_request_location_and_app_properties():
+    from photolib.drive.client import FILE_FIELDS
+
+    assert "imageMediaMetadata(time,location)" in FILE_FIELDS
+    assert "appProperties" in FILE_FIELDS
