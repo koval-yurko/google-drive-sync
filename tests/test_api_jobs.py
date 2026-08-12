@@ -55,3 +55,13 @@ def test_stream_endpoint_serves_event_stream(client):
     with client.stream("GET", f"/api/jobs/{job['id']}/stream") as response:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
+
+
+def test_cancel_route_rejects_a_finished_job(client):
+    job = client.post("/api/actions/check_connection/run", json={}).json()
+    client.app.state.runner.wait_idle()
+    assert client.post(f"/api/jobs/{job['id']}/cancel").status_code == 409
+
+
+def test_cancel_route_404s_on_an_unknown_job(client):
+    assert client.post("/api/jobs/nope/cancel").status_code == 404

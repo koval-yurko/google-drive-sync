@@ -22,6 +22,8 @@ class JobRunner:
         self._idle.set()
         self._outstanding = 0
         self._outstanding_lock = threading.Lock()
+        self._cancels: dict[str, threading.Event] = {}
+        self._cancels_lock = threading.Lock()
 
     def start(self) -> None:
         if self._thread is not None:
@@ -53,6 +55,21 @@ class JobRunner:
         if not self._idle.wait(timeout):
             raise TimeoutError("job runner did not become idle")
 
+    def cancel(self, job_id: str) -> bool:
+        """Ask a queued or running job to stop. False if it is already over."""
+        job = self._repo.get(job_id)
+        if job is None or job.status not in {"queued", "running"}:
+            return False
+        with self._cancels_lock:
+            event = self._cancels.setdefault(job_id, threading.Event())
+        event.set()
+        if job.status == "queued":
+            # It may never reach _execute if the runner is stopped; settle it
+            # now. _execute re-checks and returns early if it does start.
+            self._repo.mark_cancelled(job_id)
+            self._emit(job_id, {"type": "status", "status": "cancelled"})
+        return True
+
     def _loop(self) -> None:
         while True:
             job_id = self._queue.get()
@@ -75,10 +92,19 @@ class JobRunner:
         try:
             spec = registry.get_action(job.action)
             params = spec.params_model.model_validate(job.params)
+            with self._cancels_lock:
+                cancel = self._cancels.setdefault(job.id, threading.Event())
+            if cancel.is_set():
+                self._repo.mark_cancelled(job_id)
+                self._emit(job_id, {"type": "status", "status": "cancelled"})
+                return
+
             ctx = self._context_factory()
             ctx.run_id = job.run_id
-            ctx.cancelled = threading.Event()
-            for event in spec.run(ctx, params):
+            ctx.cancelled = cancel
+
+            generator = spec.run(ctx, params)
+            for event in generator:
                 self._repo.add_event(job_id, event.level, event.message)
                 if event.progress is not None:
                     self._repo.update_progress(
@@ -91,6 +117,16 @@ class JobRunner:
                     "phase": event.phase, "done": event.done,
                     "total": event.total,
                 })
+                if cancel.is_set():
+                    # Closing raises GeneratorExit at the yield, so the
+                    # action's `finally` blocks run and job_items survive.
+                    generator.close()
+                    self._repo.mark_cancelled(job_id)
+                    self._repo.add_event(job_id, "warn", "Cancelled.")
+                    self._emit(job_id, {
+                        "type": "status", "status": "cancelled",
+                    })
+                    return
             self._repo.mark_done(job_id)
             self._emit(job_id, {"type": "status", "status": "done"})
         except Exception as exc:
@@ -100,6 +136,9 @@ class JobRunner:
             self._emit(job_id, {
                 "type": "status", "status": "failed", "error": str(exc),
             })
+        finally:
+            with self._cancels_lock:
+                self._cancels.pop(job_id, None)
 
     def _emit(self, job_id: str, payload: dict) -> None:
         self.broker.publish(job_id, payload)

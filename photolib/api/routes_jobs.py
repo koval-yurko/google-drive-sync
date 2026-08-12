@@ -33,6 +33,19 @@ def get_events(job_id: str, request: Request, after: int = 0) -> list[dict]:
     return [e.model_dump() for e in request.app.state.jobs.events(job_id, after)]
 
 
+@router.post("/jobs/{job_id}/cancel")
+def cancel_job(job_id: str, request: Request) -> dict:
+    jobs = request.app.state.jobs
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="no such job")
+    if not request.app.state.runner.cancel(job_id):
+        raise HTTPException(
+            status_code=409, detail=f"job is already {job.status}"
+        )
+    return jobs.get(job_id).model_dump()
+
+
 @router.get("/jobs/{job_id}/stream")
 async def stream_job(job_id: str, request: Request):
     jobs = request.app.state.jobs

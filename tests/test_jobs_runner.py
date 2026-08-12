@@ -157,3 +157,70 @@ def test_run_id_reaches_the_action(runner, conn, monkeypatch):
     runner.wait_idle()
     assert seen["run_id"] == JobsRepo(conn).get(job.id).run_id
     assert seen["cancellable"] is True
+
+
+import threading
+
+
+def test_cancelling_a_running_job_stops_it_and_keeps_checkpoints(
+    runner, conn, monkeypatch
+):
+    from photolib.actions import registry
+    from photolib.db.job_items_repo import JobItemsRepo
+
+    started = threading.Event()
+    closed = {}
+
+    def slow(ctx, params):
+        items = JobItemsRepo(ctx.conn)
+        items.enumerate(ctx.run_id, "work", ["a", "b", "c"], "x")
+        try:
+            for key in ("a", "b", "c"):
+                items.mark(ctx.run_id, "work", key, "done")
+                started.set()
+                yield ProgressEvent(key, progress=0.3)
+        except GeneratorExit:
+            closed["yes"] = True
+            raise
+
+    spec = registry.get_action("check_connection")
+    monkeypatch.setattr(spec, "run", slow)
+    monkeypatch.setattr(registry, "get_action", lambda _id: spec)
+
+    job = runner.submit("check_connection", {})
+    started.wait(timeout=5.0)
+    runner.cancel(job.id)
+    runner.wait_idle()
+
+    reloaded = JobsRepo(conn).get(job.id)
+    assert reloaded.status == "cancelled"
+    assert closed.get("yes") is True
+    assert JobItemsRepo(conn).counts(reloaded.run_id, "work")["done"] >= 1
+
+
+def test_cancelling_a_queued_job_never_starts_it(runner, conn, monkeypatch):
+    from photolib.actions import registry
+
+    ran = {}
+
+    def never(ctx, params):
+        ran["yes"] = True
+        yield ProgressEvent("should not happen", progress=1.0)
+
+    spec = registry.get_action("check_connection")
+    monkeypatch.setattr(spec, "run", never)
+    monkeypatch.setattr(registry, "get_action", lambda _id: spec)
+
+    runner.stop()
+    job = runner.submit("check_connection", {})
+    assert runner.cancel(job.id) is True
+    runner.start()
+    runner.wait_idle()
+    assert "yes" not in ran
+    assert JobsRepo(conn).get(job.id).status == "cancelled"
+
+
+def test_cancelling_a_finished_job_is_false(runner, conn):
+    job = runner.submit("check_connection", {})
+    runner.wait_idle()
+    assert runner.cancel(job.id) is False
