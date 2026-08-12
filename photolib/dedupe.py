@@ -57,12 +57,16 @@ def plan_removals(drive, conn, root_id: str) -> tuple[list[Removal], list[str], 
         if file.md5 and file.size:
             groups.setdefault(file.md5, []).append((path, file))
 
-    verified = {
-        row[0]
-        for row in conn.execute(
-            "SELECT drive_file_id FROM media WHERE drive_file_id IS NOT NULL"
-        )
-    }
+    # Iterated, not materialised: `execute` releases the connection lock once
+    # the statement is prepared, so the fetch has to hold it (see
+    # catalog.LockedConnection).
+    with conn.lock:
+        verified = {
+            row[0]
+            for row in conn.execute(
+                "SELECT drive_file_id FROM media WHERE drive_file_id IS NOT NULL"
+            )
+        }
 
     removals: list[Removal] = []
     for copies in groups.values():

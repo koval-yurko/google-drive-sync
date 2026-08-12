@@ -43,22 +43,25 @@ def _histogram(conn, exclude: set[str]) -> Counter[str]:
     space in the bucket its month would otherwise need.
     """
     counts: Counter[str] = Counter()
-    for row in conn.execute(
-        "SELECT d.drive_id, d.capture_hint FROM drive_files d "
-        "LEFT JOIN media m ON m.drive_file_id = d.drive_id "
-        "WHERE d.trashed_at IS NULL AND m.id IS NULL"
-    ):
-        if row["drive_id"] in exclude:
-            continue
-        month = buckets.month_of(row["capture_hint"])
-        if month is not None:
-            counts[month] += 1
-    for row in conn.execute("SELECT drive_file_id, capture_time FROM media"):
-        if row["drive_file_id"] in exclude:
-            continue
-        month = buckets.month_of(row["capture_time"])
-        if month is not None:
-            counts[month] += 1
+    # Both cursors are iterated, not materialised, and the two halves must
+    # describe one state of the catalog (see catalog.LockedConnection).
+    with conn.lock:
+        for row in conn.execute(
+            "SELECT d.drive_id, d.capture_hint FROM drive_files d "
+            "LEFT JOIN media m ON m.drive_file_id = d.drive_id "
+            "WHERE d.trashed_at IS NULL AND m.id IS NULL"
+        ):
+            if row["drive_id"] in exclude:
+                continue
+            month = buckets.month_of(row["capture_hint"])
+            if month is not None:
+                counts[month] += 1
+        for row in conn.execute("SELECT drive_file_id, capture_time FROM media"):
+            if row["drive_file_id"] in exclude:
+                continue
+            month = buckets.month_of(row["capture_time"])
+            if month is not None:
+                counts[month] += 1
     return counts
 
 
@@ -74,10 +77,11 @@ def targets_for(conn, exclude: set[str] = frozenset()):
     and that caller sharing it costs nothing extra worth avoiding by
     duplicating the bucket-diff logic instead.
     """
-    rows = [
-        row for row in conn.execute(FOLDER_QUERY)
-        if row["drive_id"] not in exclude
-    ]
+    with conn.lock:
+        rows = [
+            row for row in conn.execute(FOLDER_QUERY)
+            if row["drive_id"] not in exclude
+        ]
     fmap = buckets.folder_map(_histogram(conn, exclude))
     targets: dict[str, str] = {}
     # Names already resident per target folder, so arrivals can dodge them.

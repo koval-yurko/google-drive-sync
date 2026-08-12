@@ -45,6 +45,11 @@ def _batched(items: list[str]) -> list[list[str]]:
 class TagsRepo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
+        # Shared with every other repo over this connection (see
+        # catalog.LockedConnection). Individual statements serialise
+        # themselves; this is for sequences that must land as a unit and for
+        # reads that iterate a cursor instead of materialising it.
+        self._lock = conn.lock
 
     # ---------- the tags themselves ----------
 
@@ -53,15 +58,18 @@ class TagsRepo:
         slug = slugify(name)
         if not slug:
             raise ValueError("a tag name must contain at least one letter or digit")
-        try:
-            cursor = self._conn.execute(
-                "INSERT INTO tags (name, slug, color) VALUES (?, ?, ?)",
-                (name, slug, color),
-            )
-        except sqlite3.IntegrityError as exc:
-            raise DuplicateTagError(f"a tag named '{slug}' already exists") from exc
-        self._conn.commit()
-        return self.get(cursor.lastrowid)
+        with self._lock:
+            try:
+                cursor = self._conn.execute(
+                    "INSERT INTO tags (name, slug, color) VALUES (?, ?, ?)",
+                    (name, slug, color),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise DuplicateTagError(
+                    f"a tag named '{slug}' already exists"
+                ) from exc
+            self._conn.commit()
+            return self.get(cursor.lastrowid)
 
     def get(self, tag_id: int) -> sqlite3.Row | None:
         return self._conn.execute(
@@ -86,20 +94,26 @@ class TagsRepo:
         slug = slugify(name)
         if not slug:
             raise ValueError("a tag name must contain at least one letter or digit")
-        try:
-            self._conn.execute(
-                "UPDATE tags SET name = ?, slug = ? WHERE id = ?",
-                (name, slug, tag_id),
-            )
-        except sqlite3.IntegrityError as exc:
-            raise DuplicateTagError(f"a tag named '{slug}' already exists") from exc
-        self._conn.commit()
-        return self.get(tag_id)
+        with self._lock:
+            try:
+                self._conn.execute(
+                    "UPDATE tags SET name = ?, slug = ? WHERE id = ?",
+                    (name, slug, tag_id),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise DuplicateTagError(
+                    f"a tag named '{slug}' already exists"
+                ) from exc
+            self._conn.commit()
+            return self.get(tag_id)
 
     def recolor(self, tag_id: int, color: str) -> sqlite3.Row:
-        self._conn.execute("UPDATE tags SET color = ? WHERE id = ?", (color, tag_id))
-        self._conn.commit()
-        return self.get(tag_id)
+        with self._lock:
+            self._conn.execute(
+                "UPDATE tags SET color = ? WHERE id = ?", (color, tag_id)
+            )
+            self._conn.commit()
+            return self.get(tag_id)
 
     def delete(self, tag_id: int) -> None:
         self._conn.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
@@ -109,40 +123,48 @@ class TagsRepo:
         """Move every assignment from source to target, then drop source."""
         if source_id == target_id:
             raise ValueError("a tag cannot be merged into itself")
-        cursor = self._conn.execute(
-            "INSERT OR IGNORE INTO file_tags (drive_id, tag_id) "
-            "SELECT drive_id, ? FROM file_tags WHERE tag_id = ?",
-            (target_id, source_id),
-        )
-        moved = cursor.rowcount
-        self._conn.execute("DELETE FROM tags WHERE id = ?", (source_id,))
-        self._conn.commit()
-        return moved
+        # Re-point then delete: between the two the source tag still exists
+        # with its assignments already copied, so a concurrent read would
+        # double-count. Held as a unit.
+        with self._lock:
+            cursor = self._conn.execute(
+                "INSERT OR IGNORE INTO file_tags (drive_id, tag_id) "
+                "SELECT drive_id, ? FROM file_tags WHERE tag_id = ?",
+                (target_id, source_id),
+            )
+            moved = cursor.rowcount
+            self._conn.execute("DELETE FROM tags WHERE id = ?", (source_id,))
+            self._conn.commit()
+            return moved
 
     # ---------- assignment ----------
 
     def add_files(self, tag_id: int, drive_ids: list[str]) -> int:
         added = 0
-        for batch in _batched(list(dict.fromkeys(drive_ids))):
-            cursor = self._conn.executemany(
-                "INSERT OR IGNORE INTO file_tags (drive_id, tag_id) VALUES (?, ?)",
-                [(drive_id, tag_id) for drive_id in batch],
-            )
-            added += cursor.rowcount
-        self._conn.commit()
+        # One tagging operation, however many batches the id list needs.
+        with self._lock:
+            for batch in _batched(list(dict.fromkeys(drive_ids))):
+                cursor = self._conn.executemany(
+                    "INSERT OR IGNORE INTO file_tags (drive_id, tag_id) "
+                    "VALUES (?, ?)",
+                    [(drive_id, tag_id) for drive_id in batch],
+                )
+                added += cursor.rowcount
+            self._conn.commit()
         return added
 
     def remove_files(self, tag_id: int, drive_ids: list[str]) -> int:
         removed = 0
-        for batch in _batched(list(dict.fromkeys(drive_ids))):
-            placeholders = ",".join("?" * len(batch))
-            cursor = self._conn.execute(
-                f"DELETE FROM file_tags WHERE tag_id = ? "
-                f"AND drive_id IN ({placeholders})",
-                [tag_id, *batch],
-            )
-            removed += cursor.rowcount
-        self._conn.commit()
+        with self._lock:
+            for batch in _batched(list(dict.fromkeys(drive_ids))):
+                placeholders = ",".join("?" * len(batch))
+                cursor = self._conn.execute(
+                    f"DELETE FROM file_tags WHERE tag_id = ? "
+                    f"AND drive_id IN ({placeholders})",
+                    [tag_id, *batch],
+                )
+                removed += cursor.rowcount
+            self._conn.commit()
         return removed
 
     # ---------- reads for other layers ----------
@@ -150,22 +172,25 @@ class TagsRepo:
     def tags_for(self, drive_ids: list[str]) -> dict[str, list[dict]]:
         """Tags per file, for the files asked about. Untagged files are absent."""
         grouped: dict[str, list[dict]] = {}
-        for batch in _batched(list(dict.fromkeys(drive_ids))):
-            placeholders = ",".join("?" * len(batch))
-            rows = self._conn.execute(
-                f"SELECT ft.drive_id, t.id, t.name, t.slug, t.color "
-                f"FROM file_tags ft JOIN tags t ON t.id = ft.tag_id "
-                f"WHERE ft.drive_id IN ({placeholders}) "
-                f"ORDER BY t.name COLLATE NOCASE",
-                batch,
-            )
-            for row in rows:
-                grouped.setdefault(row["drive_id"], []).append(
-                    {
-                        "id": row["id"], "name": row["name"],
-                        "slug": row["slug"], "color": row["color"],
-                    }
+        # The cursor is iterated, not materialised, so the fetch happens after
+        # `execute` has already released the lock — hold it across the loop.
+        with self._lock:
+            for batch in _batched(list(dict.fromkeys(drive_ids))):
+                placeholders = ",".join("?" * len(batch))
+                rows = self._conn.execute(
+                    f"SELECT ft.drive_id, t.id, t.name, t.slug, t.color "
+                    f"FROM file_tags ft JOIN tags t ON t.id = ft.tag_id "
+                    f"WHERE ft.drive_id IN ({placeholders}) "
+                    f"ORDER BY t.name COLLATE NOCASE",
+                    batch,
                 )
+                for row in rows:
+                    grouped.setdefault(row["drive_id"], []).append(
+                        {
+                            "id": row["id"], "name": row["name"],
+                            "slug": row["slug"], "color": row["color"],
+                        }
+                    )
         return grouped
 
     def ensure(self, slug: str) -> sqlite3.Row:
@@ -175,19 +200,24 @@ class TagsRepo:
         after a rebuild, so Drive is the durable copy of a tag, not just a
         mirror of one.
         """
-        row = self._conn.execute(
-            "SELECT * FROM tags WHERE slug = ?", (slug,)
-        ).fetchone()
-        if row is not None:
-            return row
-        return self.create(slug.replace("-", " "))
+        # Check-then-act: without the lock two callers can both miss and both
+        # insert, and the loser gets a DuplicateTagError from a tag it asked
+        # to have created. The lock is reentrant, so `create` may take it too.
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM tags WHERE slug = ?", (slug,)
+            ).fetchone()
+            if row is not None:
+                return row
+            return self.create(slug.replace("-", " "))
 
     def slugs_by_file(self) -> dict[str, set[str]]:
         """Every assignment in the catalog. `sync_tags` diffs against this."""
         grouped: dict[str, set[str]] = {}
-        for row in self._conn.execute(
-            "SELECT ft.drive_id, t.slug FROM file_tags ft "
-            "JOIN tags t ON t.id = ft.tag_id"
-        ):
-            grouped.setdefault(row["drive_id"], set()).add(row["slug"])
+        with self._lock:
+            for row in self._conn.execute(
+                "SELECT ft.drive_id, t.slug FROM file_tags ft "
+                "JOIN tags t ON t.id = ft.tag_id"
+            ):
+                grouped.setdefault(row["drive_id"], set()).add(row["slug"])
         return grouped

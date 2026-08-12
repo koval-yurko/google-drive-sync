@@ -28,19 +28,20 @@ class ScanRepo:
     def upsert_archive(
         self, drive_id: str, name: str, size: int, modified_time: str | None
     ) -> int:
-        self._conn.execute(
-            "INSERT INTO archives (drive_id, name, size, modified_time) "
-            "VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(drive_id) DO UPDATE SET "
-            "  name = excluded.name, size = excluded.size, "
-            "  modified_time = excluded.modified_time",
-            (drive_id, name, size, modified_time),
-        )
-        self._conn.commit()
-        row = self._conn.execute(
-            "SELECT id FROM archives WHERE drive_id = ?", (drive_id,)
-        ).fetchone()
-        return row["id"]
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO archives (drive_id, name, size, modified_time) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(drive_id) DO UPDATE SET "
+                "  name = excluded.name, size = excluded.size, "
+                "  modified_time = excluded.modified_time",
+                (drive_id, name, size, modified_time),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT id FROM archives WHERE drive_id = ?", (drive_id,)
+            ).fetchone()
+            return row["id"]
 
     def archive_is_current(
         self, drive_id: str, size: int, modified_time: str | None
@@ -65,20 +66,25 @@ class ScanRepo:
     def replace_entries(
         self, archive_id: int, entries: list[ZipEntry], kinds: dict[str, str]
     ) -> None:
-        self._conn.execute("DELETE FROM entries WHERE archive_id = ?", (archive_id,))
-        self._conn.executemany(
-            f"INSERT INTO entries ({_ENTRY_COLUMNS}) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    archive_id, e.path, e.name, e.crc32, e.size,
-                    e.compressed_size, e.method, e.local_header_offset,
-                    kinds[e.path],
-                )
-                for e in entries
-            ],
-        )
-        self._conn.commit()
+        # Delete-then-insert: a reader between the two sees an archive with no
+        # entries at all, so the pair is held under the connection lock.
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM entries WHERE archive_id = ?", (archive_id,)
+            )
+            self._conn.executemany(
+                f"INSERT INTO entries ({_ENTRY_COLUMNS}) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        archive_id, e.path, e.name, e.crc32, e.size,
+                        e.compressed_size, e.method, e.local_header_offset,
+                        kinds[e.path],
+                    )
+                    for e in entries
+                ],
+            )
+            self._conn.commit()
 
     def entries_of_kind(self, kind: str) -> list[sqlite3.Row]:
         return list(
@@ -103,29 +109,34 @@ class ScanRepo:
         1,284 ids exceed SQLite's host-parameter limit.
         """
         stamp = _now()
-        self._conn.executemany(
-            "INSERT INTO drive_files "
-            "  (drive_id, name, parent_path, md5, size, mime_type, capture_hint, "
-            "   indexed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(drive_id) DO UPDATE SET "
-            "  name = excluded.name, parent_path = excluded.parent_path, "
-            "  md5 = excluded.md5, size = excluded.size, "
-            "  mime_type = excluded.mime_type, capture_hint = excluded.capture_hint, "
-            "  indexed_at = excluded.indexed_at, "
-            "  trashed_at = NULL",
-            [
-                (
-                    r["drive_id"], r["name"], r["parent_path"], r["md5"],
-                    r["size"], r.get("mime_type"), r.get("capture_hint"), stamp,
-                )
-                for r in rows
-            ],
-        )
-        self._conn.execute(
-            "DELETE FROM drive_files WHERE indexed_at IS NOT ?", (stamp,)
-        )
-        self._conn.commit()
+        # The upsert and the sweep are one logical refresh: a reader landing
+        # between them sees an index still holding rows Drive no longer has.
+        with self._lock:
+            self._conn.executemany(
+                "INSERT INTO drive_files "
+                "  (drive_id, name, parent_path, md5, size, mime_type, "
+                "   capture_hint, indexed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(drive_id) DO UPDATE SET "
+                "  name = excluded.name, parent_path = excluded.parent_path, "
+                "  md5 = excluded.md5, size = excluded.size, "
+                "  mime_type = excluded.mime_type, "
+                "  capture_hint = excluded.capture_hint, "
+                "  indexed_at = excluded.indexed_at, "
+                "  trashed_at = NULL",
+                [
+                    (
+                        r["drive_id"], r["name"], r["parent_path"], r["md5"],
+                        r["size"], r.get("mime_type"), r.get("capture_hint"),
+                        stamp,
+                    )
+                    for r in rows
+                ],
+            )
+            self._conn.execute(
+                "DELETE FROM drive_files WHERE indexed_at IS NOT ?", (stamp,)
+            )
+            self._conn.commit()
 
     def record_drive_file(
         self,
@@ -161,10 +172,13 @@ class ScanRepo:
     def drive_file_names(self) -> dict[str, list[sqlite3.Row]]:
         """Live files only: a copy sitting in Drive's trash duplicates nothing."""
         grouped: dict[str, list[sqlite3.Row]] = defaultdict(list)
-        for row in self._conn.execute(
-            "SELECT * FROM drive_files WHERE trashed_at IS NULL"
-        ):
-            grouped[row["name"]].append(row)
+        # `execute` releases the lock once the statement is prepared, so the
+        # iteration has to hold it itself — rows are fetched as we loop.
+        with self._lock:
+            for row in self._conn.execute(
+                "SELECT * FROM drive_files WHERE trashed_at IS NULL"
+            ):
+                grouped[row["name"]].append(row)
         return grouped
 
     def live_drive_ids(self) -> set[str]:
@@ -224,10 +238,14 @@ class ScanRepo:
         def one(sql: str, *args) -> int:
             return self._conn.execute(sql, args).fetchone()[0]
 
-        return {
-            "archives": one("SELECT COUNT(*) FROM archives"),
-            "entries": one("SELECT COUNT(*) FROM entries"),
-            "media": one("SELECT COUNT(*) FROM entries WHERE kind = 'media'"),
-            "sidecars": one("SELECT COUNT(*) FROM entries WHERE kind = 'sidecar'"),
-            "drive_files": one("SELECT COUNT(*) FROM drive_files"),
-        }
+        # Read together and displayed together, so taken against one state.
+        with self._lock:
+            return {
+                "archives": one("SELECT COUNT(*) FROM archives"),
+                "entries": one("SELECT COUNT(*) FROM entries"),
+                "media": one("SELECT COUNT(*) FROM entries WHERE kind = 'media'"),
+                "sidecars": one(
+                    "SELECT COUNT(*) FROM entries WHERE kind = 'sidecar'"
+                ),
+                "drive_files": one("SELECT COUNT(*) FROM drive_files"),
+            }

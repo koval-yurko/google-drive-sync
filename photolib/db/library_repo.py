@@ -101,30 +101,40 @@ def _where(filters: Filters) -> tuple[str, list]:
 class LibraryRepo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
+        # Shared with every other repo over this connection (see
+        # catalog.LockedConnection). Every read here iterates a cursor rather
+        # than materialising it, and `execute` has released the lock by then.
+        self._lock = conn.lock
 
     def list_files(self, filters: Filters, limit: int, offset: int) -> dict:
         clause, args = _where(filters)
-        total = self._conn.execute(
-            f"SELECT COUNT(*) {_FROM} {clause}", args
-        ).fetchone()[0]
-        rows = self._conn.execute(
-            f"{_SELECT} {_FROM} {clause} {_ORDER} LIMIT ? OFFSET ?",
-            [*args, limit, offset],
-        )
-        return {
-            "total": total,
-            "rows": [{field: row[field] for field in ROW_FIELDS} for row in rows],
-        }
+        # The count and the page must describe the same catalog, and the page
+        # rows are fetched as the comprehension iterates.
+        with self._lock:
+            total = self._conn.execute(
+                f"SELECT COUNT(*) {_FROM} {clause}", args
+            ).fetchone()[0]
+            rows = self._conn.execute(
+                f"{_SELECT} {_FROM} {clause} {_ORDER} LIMIT ? OFFSET ?",
+                [*args, limit, offset],
+            )
+            return {
+                "total": total,
+                "rows": [
+                    {field: row[field] for field in ROW_FIELDS} for row in rows
+                ],
+            }
 
     def all_ids(self, filters: Filters) -> list[str]:
         """Every id matching the filter — what 'select all matching' selects."""
         clause, args = _where(filters)
-        return [
-            row["drive_id"]
-            for row in self._conn.execute(
-                f"SELECT d.drive_id {_FROM} {clause} {_ORDER}", args
-            )
-        ]
+        with self._lock:
+            return [
+                row["drive_id"]
+                for row in self._conn.execute(
+                    f"SELECT d.drive_id {_FROM} {clause} {_ORDER}", args
+                )
+            ]
 
     def detail(self, drive_id: str) -> dict | None:
         row = self._conn.execute(
@@ -148,10 +158,13 @@ class LibraryRepo:
                 f"SELECT COUNT(*) {_FROM} WHERE d.trashed_at IS NULL AND {clause}"
             ).fetchone()[0]
 
-        return {
-            "total": count("1 = 1"),
-            "months": group("d.parent_path", "value DESC"),
-            "countries": group(_COUNTRY, "count DESC, value ASC"),
-            "types": group(_MEDIA_TYPE, "count DESC, value ASC"),
-            "duplicates": count("m.duplicate_of IS NOT NULL"),
-        }
+        # Facet counts that disagree with each other read as a bug in the UI,
+        # so the whole set is taken against one state of the catalog.
+        with self._lock:
+            return {
+                "total": count("1 = 1"),
+                "months": group("d.parent_path", "value DESC"),
+                "countries": group(_COUNTRY, "count DESC, value ASC"),
+                "types": group(_MEDIA_TYPE, "count DESC, value ASC"),
+                "duplicates": count("m.duplicate_of IS NOT NULL"),
+            }

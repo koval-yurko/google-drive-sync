@@ -21,6 +21,14 @@ class LockedConnection(sqlite3.Connection):
     to the connection itself, instead, means every repo that shares the
     connection shares the same lock.
 
+    Every statement issued through this connection takes that lock, so a
+    repo cannot forget to. What the wrapper cannot do is hold the lock
+    while a caller iterates a cursor lazily — `execute` returns once the
+    statement is prepared, and rows are fetched afterwards. Reads that
+    iterate rather than materialise must therefore take `conn.lock`
+    themselves, as must any sequence of statements that has to land as a
+    unit.
+
     Attempting to set an arbitrary attribute on a plain sqlite3.Connection
     raises AttributeError, so the lock is defined on this subclass instead.
     """
@@ -28,6 +36,22 @@ class LockedConnection(sqlite3.Connection):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.lock = threading.RLock()
+
+    def execute(self, *args, **kwargs):
+        with self.lock:
+            return super().execute(*args, **kwargs)
+
+    def executemany(self, *args, **kwargs):
+        with self.lock:
+            return super().executemany(*args, **kwargs)
+
+    def executescript(self, *args, **kwargs):
+        with self.lock:
+            return super().executescript(*args, **kwargs)
+
+    def commit(self):
+        with self.lock:
+            return super().commit()
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
