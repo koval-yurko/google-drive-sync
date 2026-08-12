@@ -40,6 +40,7 @@ export function ReviewPage() {
   const filteredRows = verdictFilter
     ? rows.filter((row) => row.plan_verdict === verdictFilter)
     : rows
+  const truncated = total > rows.length
 
   async function onRetry(entryId: number) {
     try {
@@ -102,7 +103,10 @@ export function ReviewPage() {
       </p>
 
       <p className="muted">
-        Showing {filteredRows.length} of {total}.
+        {verdictFilter
+          ? `Showing ${filteredRows.length} of ${rows.length} fetched (${total} total in the library).`
+          : `Showing ${rows.length} of ${total}.`}
+        {truncated && ' Not every file has been fetched, so a filtered count may be incomplete.'}
       </p>
 
       <table>

@@ -129,4 +129,25 @@ describe('ReviewPage', () => {
       expect(await screen.findByText(verdict)).toBeInTheDocument()
     }
   })
+
+  it('does not claim a filtered count is out of the library total when the fetch is truncated', async () => {
+    listReviewMedia.mockResolvedValueOnce({
+      total: 500,
+      rows: [
+        { ...reviewRow, entry_id: 1, name: 'a.heic', plan_verdict: 'skip' },
+        { ...reviewRow, entry_id: 2, name: 'b.heic', plan_verdict: 'verify' },
+        { ...reviewRow, entry_id: 3, name: 'c.heic', plan_verdict: 'skip' },
+      ],
+    })
+    render(<ReviewPage />)
+    await screen.findByText('a.heic')
+    await userEvent.selectOptions(screen.getByLabelText(/verdict/i), 'skip')
+    // Two of the three fetched rows match "skip"; the library has 500 total,
+    // most of them never fetched, so the filtered count must be reported
+    // against what was actually fetched (3), never against the library total.
+    expect(await screen.findByText(/2 of 3 fetched/)).toBeInTheDocument()
+    expect(screen.getByText(/500 total in the library/)).toBeInTheDocument()
+    expect(screen.queryByText(/2 of 500/)).not.toBeInTheDocument()
+    expect(screen.getByText(/may be incomplete/i)).toBeInTheDocument()
+  })
 })
