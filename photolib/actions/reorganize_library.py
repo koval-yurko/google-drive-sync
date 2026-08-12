@@ -142,6 +142,12 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
                 longitude=result.longitude,
                 country=result.country,
                 metadata_source=result.metadata_source,
+                # I6: record what Enrich just imported from Drive so
+                # sync_tags's candidate query still catches this file if the
+                # tag is later removed locally — without this, an untagged
+                # file with no `synced_tags` on record drops out of both
+                # halves of that query and the property never gets removed.
+                synced_tags=",".join(result.tag_slugs),
             )
             for slug in result.tag_slugs:
                 tags.add_files(tags.ensure(slug)["id"], [row["drive_id"]])

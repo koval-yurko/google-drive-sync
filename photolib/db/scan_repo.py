@@ -186,14 +186,25 @@ class ScanRepo:
         longitude: float | None,
         country: str | None,
         metadata_source: str,
+        synced_tags: str | None = None,
     ) -> None:
+        """Record what Enrich learned from Drive.
+
+        `synced_tags` is the comma-joined, sorted slug list Enrich just
+        imported from the file's `t_*` appProperties — the same format
+        `sync_tags` writes at `sync_tags.py:162`. Leaving it `None` (the
+        default) leaves the column untouched, for callers that have no tag
+        information to report; passing `""` explicitly records "Drive held
+        no tags", which is different from "we never looked".
+        """
         with self._lock:
             self._conn.execute(
                 "UPDATE drive_files SET capture_hint = COALESCE(?, capture_hint), "
-                "latitude = ?, longitude = ?, country = ?, metadata_source = ? "
+                "latitude = ?, longitude = ?, country = ?, metadata_source = ?, "
+                "synced_tags = COALESCE(?, synced_tags) "
                 "WHERE drive_id = ?",
                 (capture_hint, latitude, longitude, country,
-                 metadata_source, drive_id),
+                 metadata_source, synced_tags, drive_id),
             )
             self._conn.commit()
 

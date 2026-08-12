@@ -185,6 +185,35 @@ def test_enrich_never_removes_a_local_tag(reorg_context, conn):
     assert remaining == 1
 
 
+def test_enrich_records_imported_tags_so_a_later_untag_reaches_sync_tags(
+    reorg_context, conn
+):
+    """I6: Enrich imports d-with-props' t_family appProperty into the local
+    catalog, but until it also records that in drive_files.synced_tags,
+    untagging the file locally afterwards leaves it with no local tags and
+    no synced_tags — dropping it out of both halves of sync_tags's
+    candidate query, so t_family stays on Drive forever. Enrich must write
+    synced_tags in the same format sync_tags does (sync_tags.py:162), so
+    the untag is caught and the stale property gets scheduled for removal
+    on the very next sync_tags run."""
+    from photolib.actions import sync_tags
+    from photolib.db.tags_repo import TagsRepo
+
+    list(reorganize_library.run(reorg_context, reorganize_library.Params()))
+
+    tag = conn.execute("SELECT id FROM tags WHERE slug = 'family'").fetchone()
+    assert tag is not None
+    TagsRepo(conn).remove_files(tag["id"], ["d-with-props"])
+
+    dry_run = list(sync_tags.run(reorg_context, sync_tags.Params()))
+    dry_run_text = " ".join(e.message for e in dry_run)
+    assert "would remove t_family from" in dry_run_text
+    assert "d-with-props" in dry_run_text
+
+    list(sync_tags.run(reorg_context, sync_tags.Params(confirm=True)))
+    assert reorg_context.drive.app_properties("d-with-props") == {}
+
+
 def test_cancellation_stops_between_items(reorg_context, conn, drive):
     list(reorganize_library.run(reorg_context, reorganize_library.Params()))
     reorg_context.cancelled.set()
