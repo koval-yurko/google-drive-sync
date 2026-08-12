@@ -302,6 +302,46 @@ def test_capture_hint_of_an_undated_file_is_none():
     assert DriveFile(id="x", name="a", mimeType="image/heic").capture_hint() is None
 
 
+def test_capture_reports_exif_as_the_source():
+    file = DriveFile(
+        id="x", name="a.heic", mimeType="image/heic",
+        imageMediaMetadata={"time": "2024:01:13 10:00:00"},
+        modifiedTime="2026-01-01T00:00:00Z",
+    )
+    assert file.capture() == (1705140000, "exif")
+
+
+def test_capture_reports_file_time_as_the_source():
+    file = DriveFile(
+        id="x", name="a.mov", mimeType="video/quicktime",
+        modifiedTime="2024-01-13T10:00:00Z",
+    )
+    assert file.capture() == (1705140000, "file_time")
+
+
+def test_capture_reports_file_time_when_exif_is_malformed():
+    """The bug this guards: reporting 'exif' as the source for a time that
+    failed to parse and fell through to the file time instead."""
+    file = DriveFile(
+        id="x", name="a.heic", mimeType="image/heic",
+        imageMediaMetadata={"time": "not a timestamp"},
+        modifiedTime="2024-01-13T10:00:00Z",
+    )
+    assert file.capture() == (1705140000, "file_time")
+
+
+def test_capture_reports_none_when_exif_is_malformed_and_no_file_time():
+    file = DriveFile(
+        id="x", name="a.heic", mimeType="image/heic",
+        imageMediaMetadata={"time": "not a timestamp"},
+    )
+    assert file.capture() == (None, "none")
+
+
+def test_capture_reports_none_for_an_undated_file():
+    assert DriveFile(id="x", name="a", mimeType="image/heic").capture() == (None, "none")
+
+
 def test_location_reads_image_metadata():
     from photolib.drive.client import DriveFile
 

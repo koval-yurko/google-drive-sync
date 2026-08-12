@@ -26,12 +26,6 @@ class Enrichment:
     tag_slugs: list[str] = field(default_factory=list)
 
 
-def _date_source(file: DriveFile) -> str:
-    if (file.image_media_metadata or {}).get("time"):
-        return "exif"
-    return "file_time" if file.capture_hint() is not None else "none"
-
-
 def enrichment_for(file: DriveFile, geocoder) -> Enrichment:
     """Everything Drive knows about `file`, resolved through `geocoder`."""
     coords = file.location()
@@ -39,12 +33,14 @@ def enrichment_for(file: DriveFile, geocoder) -> Enrichment:
     if coords is not None and geocoder is not None and geocoder.enabled:
         country = geocoder.lookup(*coords)
 
+    capture_hint, metadata_source = file.capture()
+
     return Enrichment(
-        capture_hint=file.capture_hint(),
+        capture_hint=capture_hint,
         latitude=coords[0] if coords else None,
         longitude=coords[1] if coords else None,
         country=country,
-        metadata_source=_date_source(file),
+        metadata_source=metadata_source,
         tag_slugs=sorted(
             key[len(TAG_PREFIX):]
             for key in (file.app_properties or {})

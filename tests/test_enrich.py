@@ -42,6 +42,23 @@ def test_no_date_at_all():
     assert result.capture_hint is None
 
 
+def test_unparseable_exif_falls_back_to_file_time():
+    file = _file(
+        imageMediaMetadata={"time": "not a timestamp"},
+        createdTime="2026-01-01T00:00:00Z",
+    )
+    result = enrichment_for(file, None)
+    assert result.metadata_source == "file_time"
+    assert result.capture_hint is not None
+
+
+def test_unparseable_exif_with_no_file_time_is_none():
+    file = _file(imageMediaMetadata={"time": "not a timestamp"})
+    result = enrichment_for(file, None)
+    assert result.metadata_source == "none"
+    assert result.capture_hint is None
+
+
 def test_gps_becomes_a_country():
     geocoder = _Geocoder()
     file = _file(imageMediaMetadata={"location": {"latitude": 37.9,
