@@ -296,8 +296,17 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
             # prevent (enforced by `move`'s own check, above). This is where
             # we notice and stop pulling further results.
             done_bytes += row["size"]
+            # Progress stays byte-weighted — a run mixing stills and video is
+            # misreported by file counts — but the item counts ride along so
+            # JobProgress can render its `412 / 842` line. A row that was
+            # cancelled before its transfer began `continue`s above and is
+            # counted by neither, which is what leaves it pending.
             yield ProgressEvent(
-                message, progress=min(done_bytes / total_bytes, 1.0), level=level
+                message,
+                progress=min(done_bytes / total_bytes, 1.0),
+                level=level,
+                done=uploaded + failed,
+                total=len(rows),
             )
             if _cancelled(ctx):
                 cancelled = True

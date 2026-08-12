@@ -198,6 +198,14 @@ def test_progress_is_reported_in_bytes(ctx):
     assert all(0.0 <= e.progress <= 1.0 for e in events)
 
 
+def test_upload_events_carry_item_counts(ctx):
+    """JobProgress renders `412 / 842` only when the event supplies them."""
+    events = [e for e in run(ctx, Params()) if e.total is not None]
+    assert events, "no upload event carried item counts"
+    assert events[-1].done == events[-1].total
+    assert all(e.done <= e.total for e in events)
+
+
 def test_the_run_gets_its_own_stamped_folder(ctx):
     events = run(ctx, Params())
     next(events)                                   # the "Uploading N file(s)" event
