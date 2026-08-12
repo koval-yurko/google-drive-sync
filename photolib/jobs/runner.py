@@ -56,7 +56,25 @@ class JobRunner:
             raise TimeoutError("job runner did not become idle")
 
     def cancel(self, job_id: str) -> bool:
-        """Ask a queued or running job to stop. False if it is already over."""
+        """Request cancellation of a queued or running job.
+
+        This is a *request*, not an instantaneous transition: for a running
+        job the request lands at the next item boundary (the next place the
+        action yields), not synchronously inside this call. Returns `False`
+        only when the job was already terminal (done/failed/cancelled, or
+        unknown) *when this request was processed* — not a promise about
+        the job's state by the time this call returns. Because the job can
+        legitimately finish on its own in the same window this call is
+        racing through, `True` does not guarantee the job will end up
+        `cancelled`: a job that finishes first legitimately wins, and that
+        is not a bug (see the two TOCTOU windows documented inline below).
+        The one invariant that *is* guaranteed, enforced by the guarded
+        `JobsRepo.mark_cancelled`: this call can never move a job that has
+        already reached a terminal status off of that status. Callers that
+        need the authoritative outcome — including the `POST
+        /jobs/{id}/cancel` route — must read the job row after calling this,
+        not trust this return value as the final word.
+        """
         job = self._repo.get(job_id)
         if job is None or job.status not in {"queued", "running"}:
             return False
@@ -93,6 +111,22 @@ class JobRunner:
         # tells the two cases apart without a second trip to the database:
         # if the entry is gone, the job is over and there is nothing to
         # leak or to cancel.
+        #
+        # Window 1 (accepted, not closed): between _execute's mark_done /
+        # mark_failed / mark_cancelled write and its `finally` popping this
+        # entry, the entry still exists. A concurrent cancel() that reads
+        # "running" and reaches this lookup inside that (very small) window
+        # gets a live event and returns True even though the row is already
+        # terminal — a "misleading True". Closing it would require a lock
+        # spanning a database write and the registry mutation, which we are
+        # not willing to pay for a request-vs-outcome distinction the API
+        # already handles correctly: the route re-reads the job row and
+        # returns *that*, so a client never sees a wrong status, only a
+        # `cancel()` return value that overstated what actually happened.
+        # The invariant that must hold — cancel() can never move an already
+        # terminal job off its terminal status — is enforced by the guarded
+        # UPDATE in mark_cancelled and covered by
+        # test_cancel_of_a_done_job_never_moves_it_off_terminal_status.
         with self._cancels_lock:
             event = self._cancels.get(job_id)
             if event is None:
@@ -132,6 +166,17 @@ class JobRunner:
                 if self._repo.mark_cancelled(job_id):
                     self._emit(job_id, {"type": "status", "status": "cancelled"})
                 return
+
+            # Window 2 (accepted, not closed): cancel() can read "queued"
+            # and set the event *after* we have already passed the check
+            # above but *before* the action's first yield. In that case the
+            # action body runs and reaches its first item boundary before
+            # this job is stopped. This is not a bug: the brief's design is
+            # that cancellation lands on item boundaries, so once an action
+            # has started, letting it reach the next yield (rather than
+            # aborting mid-item) is required, not accidental. The in-loop
+            # check further down still stops it there; no status corruption
+            # results either way, since mark_cancelled is guarded.
 
             self._repo.mark_running(job_id)
             self._emit(job_id, {"type": "status", "status": "running"})

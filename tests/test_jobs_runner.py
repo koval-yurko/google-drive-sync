@@ -168,6 +168,7 @@ def test_cancelling_a_running_job_stops_it_and_keeps_checkpoints(
     from photolib.db.job_items_repo import JobItemsRepo
 
     started = threading.Event()
+    may_proceed = threading.Event()
     closed = {}
 
     def slow(ctx, params):
@@ -178,6 +179,12 @@ def test_cancelling_a_running_job_stops_it_and_keeps_checkpoints(
                 items.mark(ctx.run_id, "work", key, "done")
                 started.set()
                 yield ProgressEvent(key, progress=0.3)
+                # Block until the test has issued the cancel, so the
+                # runner's between-yields check cannot be outrun by a fast
+                # generator racing ahead to mark_done before cancel() lands.
+                assert may_proceed.wait(timeout=5.0), (
+                    "test did not release the generator"
+                )
         except GeneratorExit:
             closed["yes"] = True
             raise
@@ -187,8 +194,9 @@ def test_cancelling_a_running_job_stops_it_and_keeps_checkpoints(
     monkeypatch.setattr(registry, "get_action", lambda _id: spec)
 
     job = runner.submit("check_connection", {})
-    started.wait(timeout=5.0)
+    assert started.wait(timeout=5.0)
     runner.cancel(job.id)
+    may_proceed.set()
     runner.wait_idle()
 
     reloaded = JobsRepo(conn).get(job.id)
@@ -223,6 +231,34 @@ def test_cancelling_a_finished_job_is_false(runner, conn):
     job = runner.submit("check_connection", {})
     runner.wait_idle()
     assert runner.cancel(job.id) is False
+
+
+def test_cancel_of_a_done_job_never_moves_it_off_terminal_status(
+    runner, conn, monkeypatch
+):
+    """cancel() must never move an already-terminal job off its terminal
+    status, even when it is fooled into attempting to — e.g. by the stale
+    status snapshot TOCTOU window described in JobRunner.cancel's docstring.
+    This is the runner-level counterpart to
+    test_mark_cancelled_is_a_guarded_noop_once_the_job_is_done: it drives
+    the call through cancel() itself, all the way into the guarded UPDATE
+    in JobsRepo.mark_cancelled.
+    """
+    job = runner.submit("check_connection", {})
+    runner.wait_idle()
+    done = JobsRepo(conn).get(job.id)
+    assert done.status == "done"
+
+    # Force cancel() down its "queued" branch (which calls mark_cancelled
+    # synchronously) for a job that has, in reality, already finished.
+    stale_queued = done.model_copy(update={"status": "queued"})
+    monkeypatch.setattr(runner._repo, "get", lambda _id: stale_queued)
+
+    assert runner.cancel(job.id) is False
+
+    reloaded = JobsRepo(conn).get(job.id)
+    assert reloaded.status == "done"
+    assert reloaded.finished_at == done.finished_at
 
 
 def test_cancelling_a_queued_job_never_emits_running_or_sets_started_at(
