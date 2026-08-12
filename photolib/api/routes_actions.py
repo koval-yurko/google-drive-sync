@@ -18,6 +18,7 @@ def list_actions() -> list[dict]:
             "title": spec.title,
             "description": spec.description,
             "order": spec.order,
+            "group": spec.group,
             "schema": spec.json_schema(),
         }
         for spec in all_actions()

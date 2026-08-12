@@ -32,6 +32,7 @@ export interface ActionSpec {
   title: string
   description: string
   order: number
+  group: 'flow' | 'advanced'
   schema: ActionSchema
 }
 

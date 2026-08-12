@@ -37,3 +37,8 @@ def test_run_unknown_action_returns_404(client):
 def test_run_with_unknown_params_returns_422(client):
     response = client.post("/api/actions/check_connection/run", json={"bad": 1})
     assert response.status_code == 422
+
+
+def test_action_list_exposes_the_group(client):
+    body = client.get("/api/actions").json()
+    assert all("group" in spec for spec in body)

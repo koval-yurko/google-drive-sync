@@ -59,6 +59,7 @@ class ActionSpec:
     order: int
     params_model: type[ActionParams]
     run: Callable[[ActionContext, ActionParams], Iterator[ProgressEvent]]
+    group: str = "advanced"
 
     def json_schema(self) -> dict:
         return self.params_model.model_json_schema()

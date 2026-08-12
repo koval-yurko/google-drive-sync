@@ -22,7 +22,7 @@ from photolib.db.settings_repo import PHOTOS_ROOT
 from photolib.drive.errors import DriveError
 
 ID = "reorganize"
-TITLE = "Reorganize Folders"
+TITLE = "Repack Buckets"
 DESCRIPTION = (
     "Move every indexed file into its ~100-file bucket folder (whole months, "
     "packed greedily), renaming on collisions, clearing the retired place "

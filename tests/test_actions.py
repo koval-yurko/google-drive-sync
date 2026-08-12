@@ -273,3 +273,22 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     assert "Duplicate" in error_message
     assert "check_connection" in error_message
     assert "test_duplicate_id_action_1" in error_message
+
+
+def test_actions_default_to_the_advanced_group():
+    from photolib.actions.registry import get_action
+
+    assert get_action("scan_archives").group == "advanced"
+
+
+def test_flows_sort_ahead_of_advanced_actions():
+    from photolib.actions.registry import all_actions
+
+    groups = [spec.group for spec in all_actions()]
+    assert groups == sorted(groups, key=lambda g: g != "flow")
+
+
+def test_reorganize_is_retitled_repack_buckets():
+    from photolib.actions.registry import get_action
+
+    assert get_action("reorganize").title == "Repack Buckets"

@@ -38,6 +38,7 @@ const ACTIONS: ActionSpec[] = [
     title: 'Check Connection',
     description: 'Verify Drive access.',
     order: 0,
+    group: 'advanced',
     schema: { type: 'object', properties: {} },
   },
   {
@@ -45,6 +46,7 @@ const ACTIONS: ActionSpec[] = [
     title: 'Organize Photos',
     description: 'Upload every planned file.',
     order: 40,
+    group: 'advanced',
     schema: { type: 'object', properties: {} },
   },
   {
@@ -52,6 +54,7 @@ const ACTIONS: ActionSpec[] = [
     title: 'Clear Stale Trees',
     description: 'Trash a verified extracted tree.',
     order: 50,
+    group: 'advanced',
     schema: {
       type: 'object',
       properties: {
