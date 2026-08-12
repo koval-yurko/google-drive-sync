@@ -14,7 +14,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 # (table, column, full column definition)

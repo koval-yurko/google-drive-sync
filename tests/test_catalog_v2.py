@@ -16,8 +16,8 @@ def test_phase_two_tables_exist(tmp_path):
 
 def test_schema_version_is_five(tmp_path):
     conn = catalog.connect(tmp_path / "t.db")
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
-    assert catalog.SCHEMA_VERSION == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+    assert catalog.SCHEMA_VERSION == 6
 
 
 def test_upgrade_from_v1_keeps_existing_rows(tmp_path):
@@ -31,7 +31,7 @@ def test_upgrade_from_v1_keeps_existing_rows(tmp_path):
 
     upgraded = catalog.connect(db)
     assert upgraded.execute("SELECT value FROM settings").fetchone()["value"] == "x"
-    assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 6
 
 
 def test_media_requires_a_known_entry(tmp_path):

@@ -135,3 +135,17 @@ CREATE TABLE IF NOT EXISTS file_tags (
 );
 
 CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id);
+
+CREATE TABLE IF NOT EXISTS job_items (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id     TEXT NOT NULL,
+    phase      TEXT NOT NULL,
+    item_key   TEXT NOT NULL,
+    job_id     TEXT NOT NULL,
+    state      TEXT NOT NULL CHECK (state IN ('pending','done','failed','skipped')),
+    detail     TEXT,
+    updated_at TEXT NOT NULL,
+    UNIQUE (run_id, phase, item_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_items_run ON job_items(run_id, phase, state);
