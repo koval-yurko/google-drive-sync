@@ -182,3 +182,16 @@ def test_slugs_by_file(conn):
     repo.add_files(family["id"], ["d1"])
 
     assert repo.slugs_by_file() == {"d1": {"family"}}
+
+
+def test_ensure_creates_a_missing_tag_from_its_slug(conn):
+    repo = TagsRepo(conn)
+    tag = repo.ensure("greece-2025")
+    assert tag["slug"] == "greece-2025"
+    assert tag["name"] == "greece 2025"
+
+
+def test_ensure_returns_the_existing_tag(conn):
+    repo = TagsRepo(conn)
+    created = repo.create("Family")
+    assert repo.ensure(created["slug"])["id"] == created["id"]

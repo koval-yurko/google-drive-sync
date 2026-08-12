@@ -226,3 +226,40 @@ def test_the_spool_file_is_reported_as_it_is_claimed(tmp_path):
     claimed: list = []
     transfer_one(tmp_path, fake, on_spool=claimed.append)
     assert [p.name for p in claimed] == ["IMG_1.HEIC.part"]
+
+
+def test_matching_md5_adopts_the_existing_file_without_uploading(tmp_path):
+    """No folder is even created — an adoption never touches the parent."""
+    fake = FakeDrive()
+    expected = hashlib.md5(PAYLOAD).hexdigest()
+
+    result = transfer_one(
+        tmp_path, fake, skip_if_md5=expected, adopt_id="drive-existing"
+    )
+
+    assert result.adopted is True
+    assert result.drive_file_id == "drive-existing"
+    assert result.md5 == expected
+    assert fake.sessions_started == 0
+
+
+def test_differing_md5_uploads_normally(tmp_path):
+    fake = FakeDrive()
+    fake.add_folder("p", "2023-11")
+
+    result = transfer_one(
+        tmp_path, fake, skip_if_md5="not-the-same", adopt_id="drive-x"
+    )
+
+    assert result.adopted is False
+    assert result.drive_file_id != "drive-x"
+    assert fake.sessions_started == 1
+
+
+def test_spool_is_always_deleted_after_an_adoption(tmp_path):
+    fake = FakeDrive()
+    transfer_one(
+        tmp_path, fake,
+        skip_if_md5=hashlib.md5(PAYLOAD).hexdigest(), adopt_id="drive-existing",
+    )
+    assert list(tmp_path.iterdir()) == []

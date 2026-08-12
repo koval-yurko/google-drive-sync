@@ -2,6 +2,9 @@ import { NavLink } from 'react-router-dom'
 import type { ActionSpec } from '../api/types'
 
 export function Nav({ actions }: { actions: ActionSpec[] }) {
+  const flows = actions.filter((a) => a.group === 'flow')
+  const advanced = actions.filter((a) => a.group !== 'flow')
+
   return (
     <nav className="nav">
       <h1>Photo Library</h1>
@@ -10,8 +13,8 @@ export function Nav({ actions }: { actions: ActionSpec[] }) {
         <NavLink to="/settings">Settings</NavLink>
       </section>
       <section>
-        <h2>Actions</h2>
-        {actions.map((action) => (
+        <h2>Flows</h2>
+        {flows.map((action) => (
           <NavLink key={action.id} to={`/actions/${action.id}`}>
             {action.title}
           </NavLink>
@@ -26,6 +29,16 @@ export function Nav({ actions }: { actions: ActionSpec[] }) {
         <h2>Activity</h2>
         <NavLink to="/review">Review Plan</NavLink>
         <NavLink to="/jobs">Jobs</NavLink>
+      </section>
+      <section>
+        <details>
+          <summary>Advanced</summary>
+          {advanced.map((action) => (
+            <NavLink key={action.id} to={`/actions/${action.id}`}>
+              {action.title}
+            </NavLink>
+          ))}
+        </details>
       </section>
     </nav>
   )

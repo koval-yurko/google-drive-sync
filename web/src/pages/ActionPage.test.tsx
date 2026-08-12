@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { ActionSpec } from '../api/types'
+import type { ActionSpec, Job } from '../api/types'
 import { ActionPage } from './ActionPage'
 
 const runAction = vi.fn(async (_id: string, _params: object) => ({
@@ -24,9 +24,18 @@ const getDownloads = vi.fn(async () => ({
   stale_runs: [],
 }))
 
+const baseJob: Job = {
+  id: 'job-1', action: 'check_connection', params: {}, status: 'done',
+  progress: 1, message: null, error: null, created_at: '', started_at: null,
+  finished_at: null, run_id: 'run-1', resumed_from: null, phase: null,
+  items_done: 0, items_total: 0,
+}
+
+const getJob = vi.fn(async (_id: string) => baseJob)
+
 vi.mock('../api/client', () => ({
   runAction: (...args: unknown[]) => runAction(...(args as [string, object])),
-  getJob: vi.fn(async () => ({ id: 'job-1', status: 'done', progress: 1, message: null })),
+  getJob: (id: string) => getJob(id),
   getJobEvents: vi.fn(async () => []),
   streamJob: vi.fn(() => () => undefined),
   getDownloads: () => getDownloads(),
@@ -38,6 +47,7 @@ const ACTIONS: ActionSpec[] = [
     title: 'Check Connection',
     description: 'Verify Drive access.',
     order: 0,
+    group: 'advanced',
     schema: { type: 'object', properties: {} },
   },
   {
@@ -45,6 +55,7 @@ const ACTIONS: ActionSpec[] = [
     title: 'Organize Photos',
     description: 'Upload every planned file.',
     order: 40,
+    group: 'advanced',
     schema: { type: 'object', properties: {} },
   },
   {
@@ -52,11 +63,26 @@ const ACTIONS: ActionSpec[] = [
     title: 'Clear Stale Trees',
     description: 'Trash a verified extracted tree.',
     order: 50,
+    group: 'advanced',
     schema: {
       type: 'object',
       properties: {
         tree_folder_id: { type: 'string', title: 'Tree Folder Id', default: '' },
         confirm: { type: 'boolean', title: 'Confirm', default: false },
+      },
+    },
+  },
+  {
+    id: 'sync_archives',
+    title: 'Sync from Archives',
+    description: 'Extract every file from the archives.',
+    order: 1,
+    group: 'flow',
+    schema: {
+      type: 'object',
+      properties: {
+        confirm: { type: 'boolean', title: 'Confirm', default: false },
+        run_id: { type: 'string', title: 'Run Id', default: '' },
       },
     },
   },
@@ -119,5 +145,64 @@ describe('ActionPage', () => {
     renderAt('/actions/check_connection')
     await userEvent.click(screen.getByRole('button', { name: /run/i }))
     expect(getDownloads).not.toHaveBeenCalled()
+  })
+
+  // C1: an unconfirmed flow's dry run must be confirmable from the job it
+  // just produced — reposting with confirm=true and *that* job's own
+  // run_id, never a fresh one, or the flow refuses ("no plan for this run").
+  it('offers to confirm a finished, unconfirmed flow run using its own run_id', async () => {
+    getJob.mockResolvedValueOnce({
+      ...baseJob, action: 'sync_archives', run_id: 'run-abc',
+      params: { workers: 4 },
+    })
+
+    renderAt('/actions/sync_archives')
+    await userEvent.click(screen.getByRole('button', { name: /run/i }))
+    const confirmButton = await screen.findByRole(
+      'button', { name: /confirm this plan/i },
+    )
+    await userEvent.click(confirmButton)
+
+    expect(runAction).toHaveBeenLastCalledWith('sync_archives', {
+      workers: 4,
+      confirm: true,
+      run_id: 'run-abc',
+    })
+  })
+
+  it('does not offer to confirm a run that is not a finished flow', async () => {
+    // Advanced action: getJob's default mock ('check_connection', 'done')
+    // applies, but group is 'advanced', not 'flow'.
+    renderAt('/actions/check_connection')
+    await userEvent.click(screen.getByRole('button', { name: /run/i }))
+    await screen.findByText(/status/i)
+    expect(
+      screen.queryByRole('button', { name: /confirm this plan/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('does not offer to confirm a flow run that is still in progress', async () => {
+    getJob.mockResolvedValueOnce({
+      ...baseJob, action: 'sync_archives', status: 'running', run_id: 'run-abc',
+    })
+    renderAt('/actions/sync_archives')
+    await userEvent.click(screen.getByRole('button', { name: /run/i }))
+    await screen.findByText(/running/i)
+    expect(
+      screen.queryByRole('button', { name: /confirm this plan/i }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('does not offer to confirm a run that was already confirmed', async () => {
+    getJob.mockResolvedValueOnce({
+      ...baseJob, action: 'sync_archives', run_id: 'run-abc',
+      params: { confirm: true },
+    })
+    renderAt('/actions/sync_archives')
+    await userEvent.click(screen.getByRole('button', { name: /run/i }))
+    await screen.findByText(/status/i)
+    expect(
+      screen.queryByRole('button', { name: /confirm this plan/i }),
+    ).not.toBeInTheDocument()
   })
 })

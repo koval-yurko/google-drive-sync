@@ -14,7 +14,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 # (table, column, full column definition)
@@ -27,6 +27,17 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("drive_files", "mime_type", "mime_type TEXT"),
     ("drive_files", "synced_tags", "synced_tags TEXT"),
     ("drive_files", "capture_hint", "capture_hint INTEGER"),
+    ("jobs", "run_id", "run_id TEXT"),
+    ("jobs", "resumed_from", "resumed_from TEXT"),
+    ("jobs", "phase", "phase TEXT"),
+    ("jobs", "items_done", "items_done INTEGER NOT NULL DEFAULT 0"),
+    ("jobs", "items_total", "items_total INTEGER NOT NULL DEFAULT 0"),
+    ("media", "plan_verdict", "plan_verdict TEXT"),
+    ("media", "plan_match", "plan_match TEXT"),
+    ("drive_files", "country", "country TEXT"),
+    ("drive_files", "latitude", "latitude REAL"),
+    ("drive_files", "longitude", "longitude REAL"),
+    ("drive_files", "metadata_source", "metadata_source TEXT"),
 )
 
 # (table, column) pairs retired from the schema. SQLite 3.35+ supports

@@ -161,3 +161,20 @@ def test_upsert_drive_files_revives_a_trashed_row(conn):
     repo.upsert_drive_files(_rows(("d1", "IMG_1.HEIC", "2025-05", "image/heic")))
 
     assert conn.execute("SELECT trashed_at FROM drive_files").fetchone()["trashed_at"] is None
+
+
+def test_set_enrichment_and_unenriched(conn):
+    repo = ScanRepo(conn)
+    repo.upsert_drive_files([
+        {"drive_id": "d1", "name": "a.heic", "parent_path": "2025-01",
+         "md5": "x", "size": 3, "mime_type": "image/heic", "capture_hint": None},
+    ])
+    assert [r["drive_id"] for r in repo.unenriched()] == ["d1"]
+    repo.set_enrichment("d1", capture_hint=1700000000, latitude=37.9,
+                        longitude=23.7, country="Greece",
+                        metadata_source="exif")
+    assert repo.unenriched() == []
+    row = conn.execute(
+        "SELECT * FROM drive_files WHERE drive_id = 'd1'"
+    ).fetchone()
+    assert (row["country"], row["metadata_source"]) == ("Greece", "exif")

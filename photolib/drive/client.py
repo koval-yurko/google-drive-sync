@@ -18,7 +18,7 @@ API_ROOT = "https://www.googleapis.com/drive/v3"
 FOLDER_MIME = "application/vnd.google-apps.folder"
 FILE_FIELDS = (
     "id,name,mimeType,size,md5Checksum,createdTime,modifiedTime,parents,"
-    "thumbnailLink,imageMediaMetadata(time)"
+    "thumbnailLink,imageMediaMetadata(time,location),appProperties"
 )
 
 # Drive's thumbnailLink ends in a size directive: .../abc=s220. Swapping it is
@@ -39,12 +39,52 @@ class DriveFile(BaseModel):
     image_media_metadata: dict | None = Field(
         default=None, alias="imageMediaMetadata"
     )
+    app_properties: dict | None = Field(default=None, alias="appProperties")
 
     model_config = {"populate_by_name": True}
 
     @property
     def is_folder(self) -> bool:
         return self.mime_type == FOLDER_MIME
+
+    def capture(self) -> tuple[int | None, str]:
+        """Best guess at when this was captured, and which source supplied it.
+
+        Returns (epoch seconds or None, "exif" | "file_time" | "none"). EXIF
+        time is the real answer where Drive extracted one *and it parses*;
+        file times are the fallback for videos, stripped images, and EXIF
+        times that fail to parse. "none" means Drive knows nothing datable
+        about this file.
+        """
+        exif = (self.image_media_metadata or {}).get("time")
+        if exif:
+            try:
+                parsed = datetime.strptime(exif, "%Y:%m:%d %H:%M:%S")
+                return (
+                    int(parsed.replace(tzinfo=timezone.utc).timestamp()),
+                    "exif",
+                )
+            except ValueError:
+                pass
+        # createdTime first: modifiedTime is a metadata-mutation timestamp,
+        # and Repack issues a files.update on every move, so a legacy file's
+        # bucket month could otherwise end up being its last-repack month
+        # rather than anything about when it was actually captured.
+        for stamp in (self.created_time, self.modified_time):
+            if not stamp:
+                continue
+            try:
+                return (
+                    int(
+                        datetime.fromisoformat(
+                            stamp.replace("Z", "+00:00")
+                        ).timestamp()
+                    ),
+                    "file_time",
+                )
+            except ValueError:
+                continue
+        return None, "none"
 
     def capture_hint(self) -> int | None:
         """Best guess at when this was captured, in epoch seconds.
@@ -53,23 +93,15 @@ class DriveFile(BaseModel):
         are the fallback for videos and stripped images. None means Drive
         knows nothing datable about this file.
         """
-        exif = (self.image_media_metadata or {}).get("time")
-        if exif:
-            try:
-                parsed = datetime.strptime(exif, "%Y:%m:%d %H:%M:%S")
-                return int(parsed.replace(tzinfo=timezone.utc).timestamp())
-            except ValueError:
-                pass
-        for stamp in (self.modified_time, self.created_time):
-            if not stamp:
-                continue
-            try:
-                return int(
-                    datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
-                )
-            except ValueError:
-                continue
-        return None
+        return self.capture()[0]
+
+    def location(self) -> tuple[float, float] | None:
+        """EXIF coordinates, or None. (0, 0) is Drive's way of saying nothing."""
+        loc = (self.image_media_metadata or {}).get("location") or {}
+        lat, lon = loc.get("latitude"), loc.get("longitude")
+        if lat is None or lon is None or (lat == 0 and lon == 0):
+            return None
+        return float(lat), float(lon)
 
 
 class DriveClient:

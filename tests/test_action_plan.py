@@ -1,8 +1,10 @@
+import hashlib
 import json
 from datetime import datetime, timezone
 
 import pytest
 
+from photolib.actions import verify_library
 from photolib.actions.base import ActionContext
 from photolib.actions.pair_metadata import Params as PairParams
 from photolib.actions.pair_metadata import run as pair
@@ -56,6 +58,46 @@ def ctx(tmp_path, monkeypatch):
 
 def by_name(ctx) -> dict:
     return {row["name"]: row for row in MediaRepo(ctx.conn).all_media()}
+
+
+@pytest.fixture
+def planned_catalog(conn, tmp_path, monkeypatch):
+    """One archive, two entries; a live Drive file matches the first by name+size."""
+    monkeypatch.setenv("PHOTOLIB_HOME", str(tmp_path))
+    monkeypatch.delenv("GOOGLE_MAPS_API_KEY", raising=False)
+    cfg = Config.load()
+    conn.execute(
+        "INSERT INTO archives (drive_id, name, size) VALUES ('z1', 'a.zip', 10)"
+    )
+    conn.execute(
+        "INSERT INTO entries (archive_id, path, name, crc32, size, compressed_size,"
+        " method, local_header_offset, kind) VALUES "
+        "((SELECT id FROM archives WHERE drive_id='z1'),"
+        " 'd/a.heic', 'a.heic', 111, 3, 2, 8, 0, 'media')"
+    )
+    conn.execute(
+        "INSERT INTO entries (archive_id, path, name, crc32, size, compressed_size,"
+        " method, local_header_offset, kind) VALUES "
+        "((SELECT id FROM archives WHERE drive_id='z1'),"
+        " 'd/b.heic', 'b.heic', 222, 3, 2, 8, 0, 'media')"
+    )
+    conn.commit()
+    media_repo = MediaRepo(conn)
+    media_repo.upsert_media(
+        conn.execute("SELECT id FROM entries WHERE crc32 = 111").fetchone()["id"]
+    )
+    media_repo.upsert_media(
+        conn.execute("SELECT id FROM entries WHERE crc32 = 222").fetchone()["id"]
+    )
+    ScanRepo(conn).record_drive_file(
+        drive_id="d2", name="a.heic", parent_path="somewhere",
+        md5="deadbeef", size=3, mime_type="image/heic",
+    )
+    context = ActionContext(
+        conn=conn, drive=FakeDrive(), settings=SettingsRepo(conn), config=cfg
+    )
+    list(run(context, Params()))
+    return context
 
 
 def test_resolve_capture_prefers_the_sidecar():
@@ -182,6 +224,81 @@ def test_rerun_replaces_the_previous_plan(ctx):
     assert all(r["target_name"] for r in rows)
 
 
+def test_an_adopted_files_target_survives_a_plan_rerun(ctx):
+    """Regression guard: the module docstring calls Plan 'safe to run
+    repeatedly while tuning', but clear_plan()+set_plan() used to
+    unconditionally overwrite target_folder/target_name for every row —
+    including rows already `done`. For an adopted file (I5) this silently
+    undid that fix the moment an operator re-ran Plan: the recorded foreign
+    location was replaced by a freshly computed month bucket, and Verify
+    Library started reporting the adoption as drift again."""
+    list(run(ctx, Params()))
+    row = by_name(ctx)["IMG_2.MOV"]
+    content = b"mov"   # the real bytes of IMG_2.MOV in ARCHIVE
+    md5 = hashlib.md5(content).hexdigest()
+
+    # Simulate the I5-fixed Organize adopting IMG_2.MOV against a live file
+    # sitting wherever it already was — a folder Plan never chose.
+    ctx.drive.add_folder("elsewhere", "Somewhere Else", parent="photos")
+    ctx.drive.add_file("twin", "IMG_2.MOV", content, parent="elsewhere")
+    MediaRepo(ctx.conn).mark_uploaded(
+        row["entry_id"], "twin", md5,
+        target_folder="Somewhere Else", target_name="IMG_2.MOV",
+    )
+
+    list(run(ctx, Params()))   # re-run Plan, as an operator "tuning" would
+
+    after = by_name(ctx)["IMG_2.MOV"]
+    assert after["target_folder"] == "Somewhere Else"
+    assert after["target_name"] == "IMG_2.MOV"
+
+    # The assertion that matters: a read-only drift scan of live Drive must
+    # not call this adoption "moved outside the app" after the Plan rerun.
+    warnings = [
+        e.message for e in verify_library.run(ctx, verify_library.Params())
+        if e.level == "warn"
+    ]
+    assert not any("moved" in m for m in warnings)
+
+
+def test_an_ordinary_uploads_target_also_survives_a_plan_rerun(ctx):
+    """Not just adoptions: once a row is `done`, its recorded location is a
+    fact, not a re-askable planning question — an ordinary upload's target
+    must survive a Plan rerun too."""
+    list(run(ctx, Params()))
+    row = by_name(ctx)["IMG_2.MOV"]
+    MediaRepo(ctx.conn).mark_uploaded(
+        row["entry_id"], "up1", "deadbeef",
+        target_folder="custom-place", target_name="IMG_2.MOV",
+    )
+
+    list(run(ctx, Params()))
+
+    assert by_name(ctx)["IMG_2.MOV"]["target_folder"] == "custom-place"
+
+
+def test_a_pending_files_target_is_still_recomputed_by_a_plan_rerun(ctx):
+    """The fix must not freeze planning altogether: a file that has not
+    uploaded yet keeps getting a fresh target_folder every time Plan runs.
+    Proven by changing what the bucket *should* be between two runs (a
+    legacy Drive file extending its month range — see
+    test_a_legacy_drive_files_capture_hint_extends_the_bucket) and checking
+    the still-pending row picks up the new value rather than keeping its
+    first run's answer."""
+    list(run(ctx, Params()))
+    assert by_name(ctx)["IMG_1.HEIC"]["upload_status"] == "pending"
+    assert by_name(ctx)["IMG_1.HEIC"]["target_folder"] == "2019-01 - 2023-11"
+
+    ScanRepo(ctx.conn).record_drive_file(
+        drive_id="legacy1", name="legacy.jpg", parent_path="some_old_folder",
+        md5="deadbeef", size=42, mime_type="image/jpeg",
+        capture_hint=int(datetime(2024, 5, 1, tzinfo=timezone.utc).timestamp()),
+    )
+    list(run(ctx, Params()))
+
+    assert by_name(ctx)["IMG_1.HEIC"]["target_folder"] == "2019-01 - 2024-05"
+
+
 def test_name_collisions_within_a_month_are_disambiguated(ctx):
     conn = ctx.conn
     conn.execute(
@@ -210,3 +327,50 @@ def test_name_collisions_within_a_month_are_disambiguated(ctx):
     ]
     assert len(targets) == 2
     assert len(set(targets)) == 2, "colliding targets must be disambiguated"
+
+
+from photolib.actions.plan_organize import verdict_for
+
+
+class _Row(dict):
+    """sqlite3.Row is read-only; a dict subscripts the same way."""
+
+
+def test_verdict_skips_bytes_this_app_already_uploaded():
+    row = _Row(crc32=111, entry_size=3, name="a.heic")
+    verified = {(111, 3): _Row(drive_file_id="d1")}
+    assert verdict_for(row, verified, {"d1"}, {}) == ("skip", "d1")
+
+
+def test_verdict_does_not_skip_when_the_uploaded_copy_is_gone():
+    row = _Row(crc32=111, entry_size=3, name="a.heic")
+    verified = {(111, 3): _Row(drive_file_id="d1")}
+    assert verdict_for(row, verified, set(), {}) == ("upload", None)
+
+
+def test_verdict_defers_to_transfer_on_a_name_and_size_match():
+    row = _Row(crc32=111, entry_size=3, name="a.heic")
+    by_name = {"a.heic": [_Row(drive_id="d2", size=3)]}
+    assert verdict_for(row, {}, {"d2"}, by_name) == ("verify", "d2")
+
+
+def test_verdict_uploads_when_the_name_matches_but_the_size_differs():
+    row = _Row(crc32=111, entry_size=3, name="a.heic")
+    by_name = {"a.heic": [_Row(drive_id="d2", size=9)]}
+    assert verdict_for(row, {}, {"d2"}, by_name) == ("upload", None)
+
+
+def test_verdict_ignores_a_trashed_name_match():
+    row = _Row(crc32=111, entry_size=3, name="a.heic")
+    by_name = {"a.heic": [_Row(drive_id="d2", size=3)]}
+    assert verdict_for(row, {}, set(), by_name) == ("upload", None)
+
+
+def test_plan_disambiguates_the_name_of_a_verify_row(conn, planned_catalog):
+    """A verify row's upload, if it happens, cannot reuse the taken name."""
+    from photolib.db.media_repo import MediaRepo
+
+    rows = [r for r in MediaRepo(conn).all_media()
+            if r["plan_verdict"] == "verify"]
+    assert rows, "fixture must produce at least one verify row"
+    assert all("~" in r["target_name"] for r in rows)

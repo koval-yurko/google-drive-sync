@@ -21,6 +21,7 @@ def _now() -> str:
 class ScanRepo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
+        self._lock = conn.lock
 
     # ---------- archives ----------
 
@@ -165,6 +166,57 @@ class ScanRepo:
         ):
             grouped[row["name"]].append(row)
         return grouped
+
+    def live_drive_ids(self) -> set[str]:
+        """Drive ids the last scan saw untrashed."""
+        with self._lock:
+            return {
+                row["drive_id"]
+                for row in self._conn.execute(
+                    "SELECT drive_id FROM drive_files WHERE trashed_at IS NULL"
+                )
+            }
+
+    def set_enrichment(
+        self,
+        drive_id: str,
+        *,
+        capture_hint: int | None,
+        latitude: float | None,
+        longitude: float | None,
+        country: str | None,
+        metadata_source: str,
+        synced_tags: str | None = None,
+    ) -> None:
+        """Record what Enrich learned from Drive.
+
+        `synced_tags` is the comma-joined, sorted slug list Enrich just
+        imported from the file's `t_*` appProperties — the same format
+        `sync_tags` writes at `sync_tags.py:162`. Leaving it `None` (the
+        default) leaves the column untouched, for callers that have no tag
+        information to report; passing `""` explicitly records "Drive held
+        no tags", which is different from "we never looked".
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE drive_files SET capture_hint = COALESCE(?, capture_hint), "
+                "latitude = ?, longitude = ?, country = ?, metadata_source = ?, "
+                "synced_tags = COALESCE(?, synced_tags) "
+                "WHERE drive_id = ?",
+                (capture_hint, latitude, longitude, country,
+                 metadata_source, synced_tags, drive_id),
+            )
+            self._conn.commit()
+
+    def unenriched(self) -> list[sqlite3.Row]:
+        """Live files Enrich has never looked at."""
+        with self._lock:
+            return list(
+                self._conn.execute(
+                    "SELECT * FROM drive_files "
+                    "WHERE trashed_at IS NULL AND metadata_source IS NULL"
+                )
+            )
 
     # ---------- reporting ----------
 

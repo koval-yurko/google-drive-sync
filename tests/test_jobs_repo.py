@@ -1,6 +1,8 @@
 import threading
 import time
 
+import pytest
+
 from photolib.db.jobs_repo import JobsRepo, _now
 from photolib.db.settings_repo import SettingsRepo
 
@@ -200,3 +202,114 @@ def test_concurrent_cross_repo_access_is_safe(conn):
     t2.join()
 
     assert not errors, f"Concurrency errors: {errors}"
+
+
+def test_create_generates_a_run_id(conn):
+    repo = JobsRepo(conn)
+    job = repo.create("check_connection", {})
+    assert job.run_id
+    assert repo.create("check_connection", {}).run_id != job.run_id
+
+
+def test_create_accepts_an_explicit_run_id(conn):
+    repo = JobsRepo(conn)
+    first = repo.create("check_connection", {})
+    second = repo.create("check_connection", {}, run_id=first.run_id,
+                         resumed_from=first.id)
+    assert second.run_id == first.run_id
+    assert second.resumed_from == first.id
+
+
+def test_create_rejects_an_empty_run_id(conn):
+    """T2: `run_id or uuid4().hex` would treat "" the same as absent and
+    silently mint a fresh run — exactly wrong for a `run_id` text input the
+    operator clicked into and cleared. Only `None` may mean "absent"."""
+    repo = JobsRepo(conn)
+    with pytest.raises(ValueError):
+        repo.create("check_connection", {}, run_id="")
+
+
+def test_mark_cancelled(conn):
+    repo = JobsRepo(conn)
+    job = repo.create("check_connection", {})
+    assert repo.mark_cancelled(job.id) is True
+    reloaded = repo.get(job.id)
+    assert reloaded.status == "cancelled"
+    assert reloaded.finished_at
+
+
+def test_mark_cancelled_succeeds_from_running(conn):
+    repo = JobsRepo(conn)
+    job = repo.create("check_connection", {})
+    repo.mark_running(job.id)
+    assert repo.mark_cancelled(job.id) is True
+    assert repo.get(job.id).status == "cancelled"
+
+
+def test_mark_cancelled_is_a_guarded_noop_once_the_job_is_done(conn):
+    repo = JobsRepo(conn)
+    job = repo.create("check_connection", {})
+    repo.mark_done(job.id)
+    done = repo.get(job.id)
+
+    assert repo.mark_cancelled(job.id) is False
+
+    reloaded = repo.get(job.id)
+    assert reloaded.status == "done"
+    assert reloaded.finished_at == done.finished_at
+
+
+def test_update_progress_records_phase_and_counts(conn):
+    repo = JobsRepo(conn)
+    job = repo.create("check_connection", {})
+    repo.update_progress(job.id, 0.5, "half", phase="Upload (5/5)",
+                         done=12, total=40)
+    reloaded = repo.get(job.id)
+    assert (reloaded.phase, reloaded.items_done, reloaded.items_total) == (
+        "Upload (5/5)", 12, 40
+    )
+
+
+def test_update_progress_leaves_phase_alone_when_not_supplied(conn):
+    repo = JobsRepo(conn)
+    job = repo.create("check_connection", {})
+    repo.update_progress(job.id, 0.5, "half", phase="Scan (2/5)", done=3, total=9)
+    repo.update_progress(job.id, 0.6, "more")
+    reloaded = repo.get(job.id)
+    assert (reloaded.phase, reloaded.items_done, reloaded.items_total) == (
+        "Scan (2/5)", 3, 9
+    )
+
+
+def test_reconcile_interrupted_fails_a_job_left_running(conn):
+    """I3: nothing watches a `running` job across a restart, and only
+    failed/cancelled jobs are resumable — without this, a job left running
+    when the process died is stuck forever."""
+    repo = JobsRepo(conn)
+    job = repo.create("check_connection", {})
+    repo.mark_running(job.id)
+
+    ids = repo.reconcile_interrupted()
+
+    assert ids == [job.id]
+    reloaded = repo.get(job.id)
+    assert reloaded.status == "failed"
+    assert "interrupted" in reloaded.error
+    assert reloaded.finished_at
+
+
+def test_reconcile_interrupted_leaves_terminal_jobs_alone(conn):
+    repo = JobsRepo(conn)
+    done = repo.create("check_connection", {})
+    repo.mark_done(done.id)
+    failed = repo.create("check_connection", {})
+    repo.mark_failed(failed.id, "boom")
+
+    assert repo.reconcile_interrupted() == []
+    assert repo.get(done.id).status == "done"
+    assert repo.get(failed.id).error == "boom"
+
+
+def test_reconcile_interrupted_is_a_noop_with_nothing_running(conn):
+    repo = JobsRepo(conn)
+    assert repo.reconcile_interrupted() == []

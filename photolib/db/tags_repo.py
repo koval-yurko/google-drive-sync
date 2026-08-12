@@ -168,6 +168,20 @@ class TagsRepo:
                 )
         return grouped
 
+    def ensure(self, slug: str) -> sqlite3.Row:
+        """The tag with this slug, created from it when absent.
+
+        Enrich uses this to bring a `t_*` appProperty back into the catalog
+        after a rebuild, so Drive is the durable copy of a tag, not just a
+        mirror of one.
+        """
+        row = self._conn.execute(
+            "SELECT * FROM tags WHERE slug = ?", (slug,)
+        ).fetchone()
+        if row is not None:
+            return row
+        return self.create(slug.replace("-", " "))
+
     def slugs_by_file(self) -> dict[str, set[str]]:
         """Every assignment in the catalog. `sync_tags` diffs against this."""
         grouped: dict[str, set[str]] = {}

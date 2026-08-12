@@ -37,40 +37,119 @@ cd web && npm run dev
 
 Open http://localhost:5173. Vite proxies `/api` to the backend.
 
-## The pipeline
+## The two flows
 
-Run these in order from the UI.
+Most runs need only two actions, both under **Flows** in the sidebar. Each
+reports a full plan and changes nothing in Drive until you confirm through the
+button on the run page.
+
+### Sync from Archives
+
+Four read-only phases build a plan; a fifth, gated by `confirm`, uploads it.
+
+| Phase | Does |
+| --- | --- |
+| Connect | Verifies credentials and folders |
+| Scan | Indexes archive contents and the destination folder |
+| Pair | Matches sidecars to media across archive parts |
+| Plan | Resolves dates, countries, duplicate verdicts, destinations |
+
+After Plan it reports how many files are pending, already in the Global
+folder, or in error, and stops — nothing has been uploaded yet. Open
+**Review Plan** to see every file and where it would go, then click the
+**Confirm this plan** button on the run page. The button includes the run id
+shown in the progress display, so confirming acts on exactly the plan you read.
+If you need to confirm an older run, enter its run id in the form and set
+`confirm` to execute the fifth phase, **Upload**, the only one that writes to
+Drive.
+
+Files whose bytes are already in the Global folder are **not** uploaded
+again. A file is skipped only on content evidence — an MD5 this app recorded,
+or one computed from the archive at transfer time. A file whose name matches
+but whose bytes differ is uploaded under a disambiguated name.
+
+### Reorganize Folders
+
+Five phases behind one confirm gate: Index, Enrich, Dedupe, Repack, Sweep.
+
+- **Index** re-walks the Global Photos folder.
+- **Enrich** fills in dates, countries and tags for files this catalog has
+  not looked at yet (see "Browsing and tagging" below).
+- **Dedupe** plans which duplicate copies to trash.
+- **Repack** plans which files move into the bucket folder matching their
+  month.
+- **Sweep** trashes folders left empty once Dedupe and Repack have run.
+
+Without `confirm` it reports the Dedupe and Repack plans and changes
+nothing. Click the **Confirm this plan** button on the run page to apply both
+plans, in that order — a file about to be trashed must never reserve space in a
+bucket — then sweeps. The button includes the run id shown in the progress
+display, so confirming acts on exactly the plan you read. Repack moves are
+metadata-only: no bytes are re-downloaded or re-uploaded.
+
+Organised photos live in whole-month bucket folders under `Photos/`, packed
+greedily to roughly 100 files each: a busy month gets its own folder
+(`2026-05`), quiet months share one (`2025-01 - 2025-03`), and files with no
+resolvable date land in `unknown-date`. Because the packing depends on how
+many files a month ends up holding, later uploads can shift where a month's
+bucket falls — Repack corrects for that. The existing `back_*` folders are
+indexed for duplicate detection and otherwise left alone; Repack folds their
+files into buckets and trashes them once empty, same as everything else.
+
+## Advanced
+
+The phases above also exist as their own actions, for re-running a single
+phase in isolation or for recovering a flow that needs a nudge partway
+through.
 
 | Action | Does | Writes to Drive |
 | --- | --- | --- |
 | Check Connection | Verifies credentials and folders | No |
 | Scan Archives | Indexes archive contents and the destination folder | No |
 | Pair Metadata | Matches sidecars to media across archive parts | No |
-| Plan Organization | Resolves dates, countries, duplicates, destinations | No |
-| Review Plan | Shows every file and where it would go | No |
-| **Organize Photos** | **Uploads every planned file into its destination bucket folder** | **Yes** |
-| **Reorganize Folders** | **Repacks existing files into ~100-file bucket folders, trashing folders left empty** | **Yes** |
-| Library | Browse, filter, and tag what is now in Drive | No |
-| Tags | Create, rename, merge, and delete tags | No |
-| **Sync Tags to Drive** | **Mirrors tags onto each file's `appProperties`** | **Yes** |
-| **Clear Stale Trees** | **Moves a redundant extracted tree to Drive's trash** | **Yes** |
+| Plan Organization | Resolves dates, countries, duplicate verdicts, destinations | No |
+| Organize Photos | Uploads every planned file into its destination bucket folder | Yes |
+| Repack Buckets | Moves every indexed file into its bucket folder, trashing what's left empty | Yes |
+| Clear Stale Trees | Moves a redundant extracted tree to Drive's trash | Yes |
+| Clear Duplicates | Trashes byte-identical copies inside the Global Photos folder, keeping one | Yes |
+| Sync Tags to Drive | Mirrors tags onto each file's `appProperties` | Yes |
+| Verify Library | Compares the catalog against what Drive actually holds and reports drift | No |
 
-Everything unbolded is safe to repeat. The four bolded rows mutate Drive.
+## Resuming and cancelling
 
-Organised photos are destined for whole-month bucket folders under `Photos/`,
-packed greedily to roughly 100 files each: a busy month gets its own folder
-(`2026-05`), quiet months share one (`2025-01 - 2025-03`), and files with no
-resolvable date land in `unknown-date`. Because the packing depends on how
-many files a month ends up holding, later uploads can shift where a month's
-bucket falls — **Reorganize Folders** repacks the existing files to match,
-report-then-confirm like Sync Tags, with metadata-only moves (no bytes are
-re-downloaded or re-uploaded) and folders left empty trashed once they clear.
-The existing `back_*` folders are indexed for duplicate detection and left
-alone by the upload pipeline; **Reorganize Folders** is the one action that
-repacks their files into buckets and trashes them once empty.
+The two flows checkpoint differently, matched to how expensive each phase is
+to redo.
 
-Files that already exist in the destination are flagged but **still uploaded** —
-deduplication is a deliberate later step, not part of this pipeline.
+Reorganize Folders' five phases record their work in `job_items` — one row
+per file for Enrich, Dedupe and Repack, one row for the whole folder for
+Index — marked `done` (or `failed`, or `skipped`) as it happens. Dedupe's
+and Repack's plans live there too, and confirming applies exactly what was
+reported rather than recomputing it.
+
+Sync from Archives doesn't need that: its four read-only phases (Connect,
+Scan, Pair, Plan) are cheap enough to simply re-run in full every time —
+Scan skips any archive whose index is already current, and Plan clears and
+recomputes the whole per-file plan into the `media` table on every pass, so
+there is nothing to check before redoing it. The one `job_items` row Sync
+writes is a sentinel with no per-file detail; its only job is telling a
+confirm run "the plan you read exists" from "there is no plan to confirm
+yet." Upload — the phase that actually writes to Drive, and the one place a
+Sync run genuinely resumes rather than starts over — checkpoints per file in
+the `media` table instead (`upload_status`, `upload_session_uri`; see
+"Running the migration", below), not in `job_items`.
+
+**Cancel** (`POST /api/jobs/{id}/cancel`) stops the job at the next item
+boundary, not mid-item, and leaves whatever it had checkpointed — in
+`job_items` or in `media`, whichever that phase uses — exactly as it was.
+**Resume** (`POST /api/jobs/{id}/resume`) starts a new job on the same run:
+work that checkpoint already shows as done is skipped, so a cancelled or
+failed job picks up close to where it left off rather than starting over.
+
+There is no automatic resume on restart: nothing watches for a run the
+server was in the middle of when it went down and picks it back up on its
+own. That is deliberate — a partially-applied write should get a look before
+anything acts on it further, not a silent continuation the moment the server
+comes back.
 
 ## Running the migration
 
@@ -123,8 +202,12 @@ are never touched.
 ## Browsing and tagging
 
 The Library page shows what Drive actually holds under `photos_root`, grouped
-by month. It is built from the last Scan, so re-run Scan after an Organize to
-see new files. Thumbnails come from Drive's own renderer through a local disk
+by month, from the `drive_files` table. Organize keeps it current on its own:
+it records each newly uploaded file the moment it lands, and a file it adopts
+instead of uploading was already indexed by an earlier Scan — so there is
+nothing to re-run just to see the result of a Sync. Re-run Scan (or
+Reorganize Folders' Index phase) to pick up anything that changed in Drive
+some other way. Thumbnails come from Drive's own renderer through a local disk
 cache in `.cache/thumbnails` — Chrome cannot display HEIC, and 591 of these
 files are HEIC. Videos play in Drive's embedded preview, which handles the
 HEVC `.MOV` files browsers refuse.
@@ -141,6 +224,16 @@ country and media type are *not* tags: they are filters derived from data
 the catalog already holds, so there is nothing to regenerate and nothing to
 go stale. Tagging writes only to the local catalog, which is why it is
 instant.
+
+Reorganize Folders' Enrich phase fills the catalog in from the other
+direction: for every file it has not looked at yet, it reads Drive's own
+EXIF capture time and coordinates and any `t_*` appProperties already on the
+file. For a file that came from an archive this mostly confirms what Plan
+Organization and Sync Tags already resolved; for anything added to the
+Global Photos folder some other way, it is the only source of a date,
+country or tag at all. It only ever adds tags this way, never removes one —
+so reading appProperties back into the catalog means losing the catalog no
+longer means losing your tags.
 
 **Sync Tags to Drive** is what makes tags durable. It compares each file's
 `t_*` appProperties against the catalog, reports every add and removal, and
@@ -183,4 +276,8 @@ credentials live in the main checkout, so point the live suite at it:
 Create a module in `photolib/actions/` declaring `ID`, `TITLE`, `DESCRIPTION`,
 `ORDER`, a `Params` model extending `ActionParams`, and a `run(ctx, params)` generator that
 yields `ProgressEvent`s. The registry discovers it automatically and the
-frontend renders a page for it — no frontend changes required.
+frontend renders a page for it — no frontend changes required. An optional
+`GROUP` attribute, `"flow"` or `"advanced"`, decides which section of the
+sidebar it lands in; it defaults to `"advanced"`, so a new action has to opt
+in to being one of the two flows. `ORDER` sorts within a group, not across
+both.

@@ -38,10 +38,17 @@ _FROM = (
     "LEFT JOIN archives a ON a.id = e.archive_id "
 )
 
+# Catalogued files know more than Drive does; files that arrived by another
+# route know only what Enrich read off Drive. One expression each, used by the
+# select, the WHERE clauses and the facets, so they can never diverge.
+_CAPTURE = "COALESCE(m.capture_time, d.capture_hint)"
+_COUNTRY = "COALESCE(m.country, d.country)"
+
 _SELECT = (
     "SELECT d.drive_id, d.name, d.parent_path AS month, d.mime_type, "
     f"       {_MEDIA_TYPE} AS media_type, d.size, d.md5, "
-    "       m.capture_time, m.capture_source, m.country, "
+    f"       {_CAPTURE} AS capture_time, m.capture_source, "
+    f"       {_COUNTRY} AS country, "
     "       m.duplicate_of, m.duplicate_reason, a.name AS archive_name "
 )
 
@@ -67,7 +74,7 @@ def _where(filters: Filters) -> tuple[str, list]:
         clauses.append("d.parent_path = ?")
         args.append(filters.month)
     if filters.country:
-        clauses.append("m.country = ?")
+        clauses.append(f"{_COUNTRY} = ?")
         args.append(filters.country)
     if filters.media_type:
         clauses.append(f"{_MEDIA_TYPE} = ?")
@@ -144,7 +151,7 @@ class LibraryRepo:
         return {
             "total": count("1 = 1"),
             "months": group("d.parent_path", "value DESC"),
-            "countries": group("m.country", "count DESC, value ASC"),
+            "countries": group(_COUNTRY, "count DESC, value ASC"),
             "types": group(_MEDIA_TYPE, "count DESC, value ASC"),
             "duplicates": count("m.duplicate_of IS NOT NULL"),
         }

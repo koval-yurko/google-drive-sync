@@ -39,7 +39,12 @@ CREATE TABLE IF NOT EXISTS jobs (
     error        TEXT,
     created_at   TEXT NOT NULL,
     started_at   TEXT,
-    finished_at  TEXT
+    finished_at  TEXT,
+    run_id       TEXT,
+    resumed_from TEXT,
+    phase        TEXT,
+    items_done   INTEGER NOT NULL DEFAULT 0,
+    items_total  INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);
@@ -81,6 +86,8 @@ CREATE TABLE IF NOT EXISTS media (
     target_name      TEXT,
     duplicate_of     TEXT,
     duplicate_reason TEXT,
+    plan_verdict     TEXT,
+    plan_match       TEXT,
     upload_status    TEXT NOT NULL DEFAULT 'pending'
                      CHECK (upload_status IN ('pending', 'done', 'error')),
     drive_file_id    TEXT,
@@ -106,7 +113,11 @@ CREATE TABLE IF NOT EXISTS drive_files (
     trashed_at  TEXT,
     mime_type   TEXT,
     synced_tags TEXT,
-    capture_hint INTEGER
+    capture_hint INTEGER,
+    country      TEXT,
+    latitude     REAL,
+    longitude    REAL,
+    metadata_source TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_drive_files_name ON drive_files(name);
@@ -135,3 +146,17 @@ CREATE TABLE IF NOT EXISTS file_tags (
 );
 
 CREATE INDEX IF NOT EXISTS idx_file_tags_tag ON file_tags(tag_id);
+
+CREATE TABLE IF NOT EXISTS job_items (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id     TEXT NOT NULL,
+    phase      TEXT NOT NULL,
+    item_key   TEXT NOT NULL,
+    job_id     TEXT NOT NULL,
+    state      TEXT NOT NULL CHECK (state IN ('pending','done','failed','skipped')),
+    detail     TEXT,
+    updated_at TEXT NOT NULL,
+    UNIQUE (run_id, phase, item_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_job_items_run ON job_items(run_id, phase, state);

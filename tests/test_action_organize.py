@@ -1,10 +1,11 @@
 import hashlib
 import json
 import re
+import threading
 
 import pytest
 
-from photolib.actions import organize
+from photolib.actions import organize, verify_library
 from photolib.actions.base import ActionContext
 from photolib.actions.organize import Params, run
 from photolib.actions.pair_metadata import Params as PairParams
@@ -39,6 +40,16 @@ ARCHIVE = {
         SIDECAR,
     "Takeout/Google Photos/Photos from 2019/IMG_2.MOV": MOV,
 }
+
+
+@pytest.fixture
+def archive_content() -> dict:
+    """Entry name -> raw bytes, mirroring the archive `ctx` was built from.
+
+    The zip builder already holds these bytes; return them rather than
+    re-inflating the archive `ctx` built.
+    """
+    return {name.rsplit("/", 1)[-1]: content for name, content in ARCHIVE.items()}
 
 
 @pytest.fixture
@@ -234,6 +245,39 @@ def test_a_single_worker_works_too(ctx):
     assert len(uploaded_names(ctx)) == 2
 
 
+def test_cancelling_stops_new_uploads_from_starting(ctx, monkeypatch):
+    """C4 regression: every row used to be queued into the pool before the
+    first yield, so a cancellation requested mid-run still let every
+    already-queued row upload — the runner thread was simply blocked until
+    they all finished. `ctx.cancelled` must be checked before a worker
+    starts moving bytes, not only in the reporting loop after the fact."""
+    ctx.cancelled = threading.Event()
+    real_transfer = organize.transfer_entry
+
+    def spy(**kwargs):
+        result = real_transfer(**kwargs)
+        # Single worker: this runs to completion, and only then does the
+        # pool's one worker thread become free to pick up the second row —
+        # so setting the flag here lands before that row's `move()` starts,
+        # deterministically, with no sleep needed.
+        ctx.cancelled.set()
+        return result
+
+    monkeypatch.setattr("photolib.actions.organize.transfer_entry", spy)
+    list(run(ctx, Params(workers=1)))
+
+    found = uploaded_names(ctx)
+    assert len(found) == 1
+
+    rows = {r["name"]: r for r in MediaRepo(ctx.conn).all_media()}
+    untouched = [r for r in rows.values() if r["name"] not in found]
+    assert len(untouched) == 1
+    # Nothing happened to it: still pending, no session, no attempts — a
+    # plain re-run picks it up exactly as if this run had never started.
+    assert untouched[0]["upload_status"] == "pending"
+    assert untouched[0]["upload_session_uri"] is None
+
+
 def test_a_live_transfer_is_visible_while_it_moves(ctx, monkeypatch):
     """The registry is read from another thread, so read it from this one."""
     registry = InflightRegistry()
@@ -279,3 +323,87 @@ def test_a_failed_transfer_leaves_no_ghost(ctx, monkeypatch):
     list(run(ctx, Params(workers=1)))
 
     assert registry.snapshot() == []
+
+
+def test_skip_rows_are_never_uploaded(ctx):
+    repo = MediaRepo(ctx.conn)
+    for row in repo.all_media():
+        repo.set_plan(
+            row["entry_id"], plan_verdict="skip", plan_match="drive-existing"
+        )
+    events = list(run(ctx, Params()))
+    assert any("Nothing to upload" in e.message for e in events)
+
+
+def test_verify_row_matching_drive_is_marked_done_against_that_file(
+    ctx, archive_content
+):
+    """The bytes came down to prove identity; none went up."""
+    repo = MediaRepo(ctx.conn)
+    rows = repo.all_media()
+    row, others = rows[0], rows[1:]
+    # Isolate the row under test — `sessions_started == 0` should mean
+    # nothing at all opened a session, not just this particular row.
+    for other in others:
+        repo.set_plan(other["entry_id"], plan_verdict="skip", plan_match=None)
+
+    twin_md5 = hashlib.md5(archive_content[row["name"]]).hexdigest()
+    ctx.conn.execute(
+        "INSERT INTO drive_files "
+        "(drive_id, name, parent_path, md5, size, mime_type) "
+        "VALUES ('drive-twin', ?, '2025-01', ?, ?, 'image/heic')",
+        (row["name"], twin_md5, row["entry_size"]),
+    )
+    ctx.conn.commit()
+    repo.set_plan(row["entry_id"], plan_verdict="verify", plan_match="drive-twin")
+
+    list(run(ctx, Params()))
+
+    after = next(r for r in repo.all_media() if r["entry_id"] == row["entry_id"])
+    assert after["upload_status"] == "done"
+    assert after["drive_file_id"] == "drive-twin"
+    assert ctx.drive.sessions_started == 0
+
+
+def test_an_adopted_file_is_recorded_where_it_really_lives(ctx, archive_content):
+    """Finding I5: an adopted file is never moved — it stays in whatever
+    foreign folder it was already in, since Plan's bucket was only ever
+    applied on paper. The catalog must be corrected to match, or Verify
+    Library reports the app's own adoption as drift (the failure this test
+    guards; see the final assertion).
+    """
+    repo = MediaRepo(ctx.conn)
+    rows = repo.all_media()
+    row, others = rows[0], rows[1:]
+    for other in others:
+        repo.set_plan(other["entry_id"], plan_verdict="skip", plan_match=None)
+
+    content = archive_content[row["name"]]
+    twin_md5 = hashlib.md5(content).hexdigest()
+    # The adopt target lives in a folder Plan never chose for this file —
+    # that is exactly why it was a name/size "verify" match rather than a
+    # sure thing.
+    ctx.drive.add_folder("foreign", "Somewhere Else", parent="photos")
+    ctx.drive.add_file("drive-twin", row["name"], content, parent="foreign")
+    ctx.conn.execute(
+        "INSERT INTO drive_files "
+        "(drive_id, name, parent_path, md5, size, mime_type) "
+        "VALUES ('drive-twin', ?, 'Somewhere Else', ?, ?, 'image/heic')",
+        (row["name"], twin_md5, row["entry_size"]),
+    )
+    ctx.conn.commit()
+    repo.set_plan(row["entry_id"], plan_verdict="verify", plan_match="drive-twin")
+
+    list(run(ctx, Params()))
+
+    after = next(r for r in repo.all_media() if r["entry_id"] == row["entry_id"])
+    assert after["target_folder"] == "Somewhere Else"
+    assert after["target_name"] == row["name"]
+
+    # The assertion that matters: a read-only drift scan of live Drive must
+    # not call this adoption "moved outside the app".
+    warnings = [
+        e.message for e in verify_library.run(ctx, verify_library.Params())
+        if e.level == "warn"
+    ]
+    assert not any("moved" in m for m in warnings)

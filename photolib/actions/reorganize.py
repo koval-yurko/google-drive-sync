@@ -1,28 +1,25 @@
 """Move every live file into its ~100-file bucket folder, then tidy up.
 
-Metadata-only: files are reparented with one `files.update` each — no bytes
-are downloaded or re-uploaded. The same call renames arrivals that would
-collide and strips the retired `place` property. Folders left empty are
-trashed, never deleted.
-
 Shaped like `sync_tags`: it reports everything it would do and changes
 nothing until you confirm. Re-running after new uploads is expected — the
 packing shifts as months fill, and reconciling is cheap.
+
+See `photolib.repack` for how the plan itself — the bucket-diff, the
+collision renames, and the empty-folder sweep — is worked out.
 """
 
 from __future__ import annotations
 
-import os
-from collections import Counter, defaultdict
+from collections import Counter
 from typing import Iterator
 
-from photolib import buckets
+from photolib import repack
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.db.settings_repo import PHOTOS_ROOT
 from photolib.drive.errors import DriveError
 
 ID = "reorganize"
-TITLE = "Reorganize Folders"
+TITLE = "Repack Buckets"
 DESCRIPTION = (
     "Move every indexed file into its ~100-file bucket folder (whole months, "
     "packed greedily), renaming on collisions, clearing the retired place "
@@ -34,32 +31,6 @@ ORDER = 45
 
 class Params(ActionParams):
     confirm: bool = False
-
-
-def _folder_paths(drive, root_id: str) -> dict[str, str]:
-    """Every folder path under the root, mapped to its id. '' is the root."""
-    paths = {"": root_id}
-    stack: list[tuple[str, str]] = [(root_id, "")]
-    while stack:
-        current, path = stack.pop()
-        for child in drive.list_children(current, folders_only=True):
-            child_path = f"{path}/{child.name}" if path else child.name
-            paths[child_path] = child.id
-            stack.append((child.id, child_path))
-    return paths
-
-
-def _sweep_empty(drive, writer, folder_id: str) -> int:
-    """Trash child folders that hold nothing, depth first. Never the root."""
-    swept = 0
-    for child in drive.list_children(folder_id):
-        if not child.is_folder:
-            continue
-        swept += _sweep_empty(drive, writer, child.id)
-        if not drive.list_children(child.id):
-            writer.trash(child.id)
-            swept += 1
-    return swept
 
 
 def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
@@ -78,13 +49,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         )
         return
 
-    rows = list(ctx.conn.execute(
-        "SELECT d.drive_id, d.name, d.parent_path, d.md5, m.id AS media_id, "
-        "       CASE WHEN m.id IS NULL THEN d.capture_hint "
-        "            ELSE m.capture_time END AS capture "
-        "FROM drive_files d LEFT JOIN media m ON m.drive_file_id = d.drive_id "
-        "WHERE d.trashed_at IS NULL ORDER BY d.parent_path, d.name"
-    ))
+    rows, targets, names = repack.targets_for(ctx.conn)
     if not rows:
         yield ProgressEvent(
             "Nothing indexed. Run Scan Archives first.", progress=1.0,
@@ -92,18 +57,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         )
         return
 
-    fmap = buckets.folder_map(buckets.library_histogram(ctx.conn))
-    targets: dict[str, str] = {}
-    # Names already resident per target folder, so arrivals can dodge them.
-    names: dict[str, set[str]] = defaultdict(set)
-    for row in rows:
-        month = buckets.month_of(row["capture"])
-        target = fmap[month] if month else buckets.UNKNOWN_FOLDER
-        targets[row["drive_id"]] = target
-        if target == row["parent_path"]:
-            names[target].add(row["name"])
-
-    moves = [row for row in rows if targets[row["drive_id"]] != row["parent_path"]]
+    moves = repack.moves_from_targets(rows, targets, names)
 
     per_folder = Counter(targets[row["drive_id"]] for row in rows)
     yield ProgressEvent(
@@ -113,10 +67,9 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     )
     for folder in sorted(per_folder):
         yield ProgressEvent(f"{folder}: {per_folder[folder]} file(s)")
-    for row in moves[:50]:
+    for move in moves[:50]:
         yield ProgressEvent(
-            f"would move {row['parent_path']}/{row['name']} "
-            f"-> {targets[row['drive_id']]}"
+            f"would move {move.from_path}/{move.name} -> {move.to_folder}"
         )
 
     if not params.confirm:
@@ -129,14 +82,13 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         return
 
     try:
-        folder_ids = _folder_paths(ctx.drive, photos_root.id)
+        folder_ids = repack.folder_paths(ctx.drive, photos_root.id)
         # ensure_folder must run sequentially: Drive would happily create the
         # same folder twice.
-        for name in sorted({targets[row["drive_id"]] for row in moves}):
-            if name not in folder_ids:
-                folder_ids[name] = ctx.writer.ensure_folder(
-                    photos_root.id, name
-                ).id
+        target_names = sorted({move.to_folder for move in moves})
+        folder_ids.update(
+            repack.ensure_folders(ctx.writer, photos_root.id, target_names)
+        )
     except DriveError as exc:
         yield ProgressEvent(
             f"Cannot prepare destination folders: {exc}", progress=1.0,
@@ -145,40 +97,26 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         return
 
     moved = failed = renamed = 0
-    for index, row in enumerate(moves, start=1):
-        target = targets[row["drive_id"]]
-        name = row["name"]
-        if name in names[target]:
-            stem, ext = os.path.splitext(name)
-            name = f"{stem}~{(row['md5'] or row['drive_id'])[:6]}{ext}"
+    for index, move in enumerate(moves, start=1):
+        if move.new_name != move.name:
             renamed += 1
         try:
-            old_parent = folder_ids.get(row["parent_path"])
-            if old_parent is None:
-                parents = ctx.drive.get_file(row["drive_id"]).parents
+            move_folder_ids = folder_ids
+            if move.from_path not in folder_ids:
+                # A stale or unresolved parent_path: fall back to Drive's own
+                # record of this one file's current parent, exactly as this
+                # row would resolve it — not cached for any other row, since
+                # a shared parent_path is not a guarantee of a shared parent.
+                parents = ctx.drive.get_file(move.drive_id).parents
                 old_parent = parents[0] if parents else photos_root.id
-            ctx.writer.move(
-                row["drive_id"],
-                add_parent=folder_ids[target],
-                remove_parent=old_parent,
-                name=None if name == row["name"] else name,
-                properties={"place": None},
+                move_folder_ids = {**folder_ids, move.from_path: old_parent}
+            repack.apply_move(
+                ctx.writer, ctx.conn, move, move_folder_ids, drive=ctx.drive
             )
         except DriveError as exc:
             failed += 1
-            yield ProgressEvent(f"{row['name']}: {exc}", level="error")
+            yield ProgressEvent(f"{move.name}: {exc}", level="error")
             continue
-        names[target].add(name)
-        ctx.conn.execute(
-            "UPDATE drive_files SET parent_path = ?, name = ? WHERE drive_id = ?",
-            (target, name, row["drive_id"]),
-        )
-        ctx.conn.execute(
-            "UPDATE media SET target_folder = ?, target_name = ? "
-            "WHERE drive_file_id = ?",
-            (target, name, row["drive_id"]),
-        )
-        ctx.conn.commit()
         moved += 1
         if index % 20 == 0:
             yield ProgressEvent(
@@ -199,7 +137,11 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
             yield ProgressEvent(f"{row['name']}: {exc}", level="error")
 
     try:
-        swept = _sweep_empty(ctx.drive, ctx.writer, photos_root.id)
+        to_sweep = repack.plan_sweep(ctx.drive, photos_root.id)
+        swept = 0
+        for folder_id, _name in to_sweep:
+            repack.apply_sweep(ctx.writer, folder_id)
+            swept += 1
     except DriveError as exc:
         swept = 0
         yield ProgressEvent(f"Sweep stopped early: {exc}", level="error")

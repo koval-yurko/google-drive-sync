@@ -51,6 +51,12 @@ def create_app(config: Config | None = None, drive=None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Before accepting new work: a job the previous process left
+        # `running` when it stopped is otherwise stuck forever — not
+        # running, and not resumable either (only failed/cancelled jobs
+        # are). This does not resume anything on its own; it only makes the
+        # manual Resume path reachable again.
+        jobs.reconcile_interrupted()
         runner.start()
         yield
         runner.stop()

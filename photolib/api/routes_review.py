@@ -13,7 +13,7 @@ ROW_FIELDS = (
     "name", "path", "archive_name", "target_folder", "target_name",
     "capture_time", "capture_source", "country",
     "duplicate_of", "duplicate_reason", "upload_status",
-    "error", "drive_file_id",
+    "error", "drive_file_id", "plan_verdict", "plan_match",
 )
 
 

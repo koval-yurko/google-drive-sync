@@ -74,13 +74,18 @@ def _discover() -> dict[str, ActionSpec]:
             order=module.ORDER,
             params_model=module.Params,
             run=module.run,
+            group=getattr(module, "GROUP", "advanced"),
         )
         id_to_module[module.ID] = info.name
     return specs
 
 
 def all_actions() -> list[ActionSpec]:
-    return sorted(_discover().values(), key=lambda s: (s.order, s.id))
+    """Flows first, then the advanced steps, each block by order then id."""
+    return sorted(
+        _discover().values(),
+        key=lambda s: (s.group != "flow", s.order, s.id),
+    )
 
 
 def get_action(action_id: str) -> ActionSpec:

@@ -75,6 +75,10 @@ def _properties(row) -> dict[str, str]:
     return {k: v[:_MAX_PROPERTY] for k, v in props.items()}
 
 
+def _cancelled(ctx: ActionContext) -> bool:
+    return ctx.cancelled is not None and ctx.cancelled.is_set()
+
+
 def _prepare_folders(ctx: ActionContext, root_id: str, rows) -> dict[str, str]:
     """Create every destination bucket folder up front, sequentially.
 
@@ -174,6 +178,13 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
 
     def move(row):
         """Runs on a worker thread. No database access here."""
+        if _cancelled(ctx):
+            # Every row is queued into the pool up front (see below), so a
+            # cancellation that lands while some of them are still waiting
+            # for a free worker must stop them here — before a single byte
+            # moves — not just at the reporting loop below, which cannot
+            # rescind work a worker has already started.
+            return None
         entry = _entry_of(row)
         archive_id = row["archive_drive_id"]
         key = str(row["entry_id"])
@@ -197,6 +208,12 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
                     path=path,
                 ),
                 on_progress=lambda offset: inflight.uploaded(key, offset),
+                skip_if_md5=(
+                    row["match_md5"] if row["plan_verdict"] == "verify" else None
+                ),
+                adopt_id=(
+                    row["plan_match"] if row["plan_verdict"] == "verify" else None
+                ),
             )
         finally:
             inflight.finish(key)
@@ -209,6 +226,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
                 return
             repo.save_session(entry_id, uri)
 
+    cancelled = False
     with ThreadPoolExecutor(max_workers=max(1, params.workers)) as pool:
         futures = {pool.submit(move, row): row for row in rows}
         for future in as_completed(futures):
@@ -227,27 +245,63 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
                 level = "error"
                 message = f"{row['name']}: {exc}"
             else:
-                repo.mark_uploaded(
-                    row["entry_id"], result.drive_file_id, result.md5
-                )
-                # The Library browses drive_files; record the arrival so it
-                # is visible without waiting for the next Scan.
-                scans.record_drive_file(
-                    drive_id=result.drive_file_id,
-                    name=row["target_name"],
-                    parent_path=row["target_folder"],
-                    md5=result.md5,
-                    size=result.size,
-                    mime_type=mime_for(row["target_name"]),
-                )
+                if result is None:
+                    # Cancelled before this row's transfer began (see
+                    # `move`, above): nothing happened, so there is nothing
+                    # to record — the row stays 'pending' for the next run.
+                    # Still check below whether to stop pulling more.
+                    if _cancelled(ctx):
+                        cancelled = True
+                        break
+                    continue
+                if result.adopted:
+                    # The adopted file stays wherever it already lived in
+                    # Drive — Plan's bucket was never applied to it — so the
+                    # catalog's target_folder/target_name must be corrected
+                    # to match reality in the same write. Otherwise Verify
+                    # Library sees a live parent path that disagrees with
+                    # the planned one and reports it as drift the app itself
+                    # created (finding I5).
+                    repo.mark_uploaded(
+                        row["entry_id"], result.drive_file_id, result.md5,
+                        target_folder=row["match_parent_path"],
+                        target_name=row["match_name"],
+                    )
+                    message = (
+                        f"{row['name']}: already in Drive, verified by MD5 — "
+                        "not uploaded."
+                    )
+                else:
+                    repo.mark_uploaded(
+                        row["entry_id"], result.drive_file_id, result.md5
+                    )
+                    # The Library browses drive_files; record the arrival so it
+                    # is visible without waiting for the next Scan.
+                    scans.record_drive_file(
+                        drive_id=result.drive_file_id,
+                        name=row["target_name"],
+                        parent_path=row["target_folder"],
+                        md5=result.md5,
+                        size=result.size,
+                        mime_type=mime_for(row["target_name"]),
+                    )
+                    message = f"{row['target_folder']}/{row['target_name']}"
                 uploaded += 1
                 level = "info"
-                message = f"{row['target_folder']}/{row['target_name']}"
 
+            # A future that gets here completed real work — a successful
+            # upload/adopt or a genuine failure — so it is always recorded
+            # and reported even if cancellation landed in the meantime; only
+            # *starting the next row* is what cancellation is allowed to
+            # prevent (enforced by `move`'s own check, above). This is where
+            # we notice and stop pulling further results.
             done_bytes += row["size"]
             yield ProgressEvent(
                 message, progress=min(done_bytes / total_bytes, 1.0), level=level
             )
+            if _cancelled(ctx):
+                cancelled = True
+                break
 
     drain_sessions()
     inflight.close_run()
@@ -259,6 +313,14 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         )
     else:
         run_dir.rmdir()
+
+    if cancelled:
+        yield ProgressEvent(
+            f"Cancelled. Uploaded {uploaded} file(s) before stopping; the "
+            "rest are unchanged and will be picked up on the next run.",
+            progress=min(done_bytes / total_bytes, 1.0), level="warn",
+        )
+        return
 
     detail = f"Uploaded {uploaded} file(s)."
     if failed:
