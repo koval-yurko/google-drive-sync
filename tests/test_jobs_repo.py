@@ -221,10 +221,31 @@ def test_create_accepts_an_explicit_run_id(conn):
 def test_mark_cancelled(conn):
     repo = JobsRepo(conn)
     job = repo.create("check_connection", {})
-    repo.mark_cancelled(job.id)
+    assert repo.mark_cancelled(job.id) is True
     reloaded = repo.get(job.id)
     assert reloaded.status == "cancelled"
     assert reloaded.finished_at
+
+
+def test_mark_cancelled_succeeds_from_running(conn):
+    repo = JobsRepo(conn)
+    job = repo.create("check_connection", {})
+    repo.mark_running(job.id)
+    assert repo.mark_cancelled(job.id) is True
+    assert repo.get(job.id).status == "cancelled"
+
+
+def test_mark_cancelled_is_a_guarded_noop_once_the_job_is_done(conn):
+    repo = JobsRepo(conn)
+    job = repo.create("check_connection", {})
+    repo.mark_done(job.id)
+    done = repo.get(job.id)
+
+    assert repo.mark_cancelled(job.id) is False
+
+    reloaded = repo.get(job.id)
+    assert reloaded.status == "done"
+    assert reloaded.finished_at == done.finished_at
 
 
 def test_update_progress_records_phase_and_counts(conn):

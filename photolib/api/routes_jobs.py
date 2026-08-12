@@ -40,8 +40,13 @@ def cancel_job(job_id: str, request: Request) -> dict:
     if job is None:
         raise HTTPException(status_code=404, detail="no such job")
     if not request.app.state.runner.cancel(job_id):
+        # Re-read: the job may have finished in the window between the
+        # lookup above and cancel() giving up, so the pre-cancel status
+        # could already be stale by the time we report why it was rejected.
+        current = jobs.get(job_id)
+        status = current.status if current is not None else job.status
         raise HTTPException(
-            status_code=409, detail=f"job is already {job.status}"
+            status_code=409, detail=f"job is already {status}"
         )
     return jobs.get(job_id).model_dump()
 

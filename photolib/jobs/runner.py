@@ -60,14 +60,44 @@ class JobRunner:
         job = self._repo.get(job_id)
         if job is None or job.status not in {"queued", "running"}:
             return False
-        with self._cancels_lock:
-            event = self._cancels.setdefault(job_id, threading.Event())
-        event.set()
+
         if job.status == "queued":
-            # It may never reach _execute if the runner is stopped; settle it
-            # now. _execute re-checks and returns early if it does start.
-            self._repo.mark_cancelled(job_id)
+            # It may never reach _execute if the runner is stopped, so
+            # settle it now. The guarded update only wins while the job is
+            # still queued or running: a fast action can race ahead to
+            # done/failed between our read above and this call, and in that
+            # case it must be left alone rather than overwritten. _execute
+            # hasn't necessarily registered an event for this job yet (it
+            # hasn't started), so we create one here for it to find.
+            with self._cancels_lock:
+                event = self._cancels.setdefault(job_id, threading.Event())
+            event.set()
+            if not self._repo.mark_cancelled(job_id):
+                with self._cancels_lock:
+                    self._cancels.pop(job_id, None)
+                return False
             self._emit(job_id, {"type": "status", "status": "cancelled"})
+            return True
+
+        # job.status == "running": leave the DB transition to _execute,
+        # which observes the event from inside its own loop. Marking it
+        # cancelled from here too would race _execute's own terminal write
+        # (mark_done/mark_failed is unguarded, so it could stomp right back
+        # over a 'cancelled' we set concurrently).
+        #
+        # _execute registers its cancel event *before* calling mark_running
+        # (see below), so a row we just read as "running" guarantees that
+        # entry already exists in `self._cancels` — unless the job has since
+        # finished for real and its `finally` already popped it, which is
+        # exactly the race we need to detect. A plain (non-creating) lookup
+        # tells the two cases apart without a second trip to the database:
+        # if the entry is gone, the job is over and there is nothing to
+        # leak or to cancel.
+        with self._cancels_lock:
+            event = self._cancels.get(job_id)
+            if event is None:
+                return False
+            event.set()
         return True
 
     def _loop(self) -> None:
@@ -87,17 +117,27 @@ class JobRunner:
         job = self._repo.get(job_id)
         if job is None:
             return
-        self._repo.mark_running(job_id)
-        self._emit(job_id, {"type": "status", "status": "running"})
         try:
-            spec = registry.get_action(job.action)
-            params = spec.params_model.model_validate(job.params)
             with self._cancels_lock:
                 cancel = self._cancels.setdefault(job.id, threading.Event())
+
             if cancel.is_set():
-                self._repo.mark_cancelled(job_id)
-                self._emit(job_id, {"type": "status", "status": "cancelled"})
+                # Cancelled before we ever marked it running — e.g. cancel()
+                # already settled it while the runner was stopped, or it
+                # raced ahead of us here. Check this *before* mark_running so
+                # a queued-then-cancelled job never emits a `running` status
+                # and never gets a started_at. The guarded update is a no-op
+                # if cancel() (or a previous pass through this branch)
+                # already made the transition, so we don't double-emit.
+                if self._repo.mark_cancelled(job_id):
+                    self._emit(job_id, {"type": "status", "status": "cancelled"})
                 return
+
+            self._repo.mark_running(job_id)
+            self._emit(job_id, {"type": "status", "status": "running"})
+
+            spec = registry.get_action(job.action)
+            params = spec.params_model.model_validate(job.params)
 
             ctx = self._context_factory()
             ctx.run_id = job.run_id
@@ -121,11 +161,11 @@ class JobRunner:
                     # Closing raises GeneratorExit at the yield, so the
                     # action's `finally` blocks run and job_items survive.
                     generator.close()
-                    self._repo.mark_cancelled(job_id)
-                    self._repo.add_event(job_id, "warn", "Cancelled.")
-                    self._emit(job_id, {
-                        "type": "status", "status": "cancelled",
-                    })
+                    if self._repo.mark_cancelled(job_id):
+                        self._repo.add_event(job_id, "warn", "Cancelled.")
+                        self._emit(job_id, {
+                            "type": "status", "status": "cancelled",
+                        })
                     return
             self._repo.mark_done(job_id)
             self._emit(job_id, {"type": "status", "status": "done"})

@@ -123,14 +123,23 @@ class JobsRepo:
             )
             self._conn.commit()
 
-    def mark_cancelled(self, job_id: str) -> None:
+    def mark_cancelled(self, job_id: str) -> bool:
+        """Mark a job cancelled, but only while it is still queued or
+        running. The status guard makes this atomic against a concurrent
+        terminal transition: without it, a caller that read a stale
+        'queued'/'running' snapshot could overwrite an already-done or
+        already-failed row back to 'cancelled' after the fact. Returns
+        whether a row was actually changed, so callers can tell a real
+        cancellation from a no-op on a job that finished first.
+        """
         with self._lock:
-            self._conn.execute(
+            cursor = self._conn.execute(
                 "UPDATE jobs SET status = 'cancelled', finished_at = ? "
-                "WHERE id = ?",
+                "WHERE id = ? AND status IN ('queued', 'running')",
                 (_now(), job_id),
             )
             self._conn.commit()
+            return cursor.rowcount > 0
 
     def update_progress(
         self,

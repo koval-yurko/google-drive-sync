@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 
 from photolib.actions.base import ActionContext, ProgressEvent
@@ -159,9 +161,6 @@ def test_run_id_reaches_the_action(runner, conn, monkeypatch):
     assert seen["cancellable"] is True
 
 
-import threading
-
-
 def test_cancelling_a_running_job_stops_it_and_keeps_checkpoints(
     runner, conn, monkeypatch
 ):
@@ -224,3 +223,61 @@ def test_cancelling_a_finished_job_is_false(runner, conn):
     job = runner.submit("check_connection", {})
     runner.wait_idle()
     assert runner.cancel(job.id) is False
+
+
+def test_cancelling_a_queued_job_never_emits_running_or_sets_started_at(
+    runner, conn, monkeypatch
+):
+    from photolib.actions import registry
+
+    ran = {}
+
+    def never(ctx, params):
+        ran["yes"] = True
+        yield ProgressEvent("should not happen", progress=1.0)
+
+    spec = registry.get_action("check_connection")
+    monkeypatch.setattr(spec, "run", never)
+    monkeypatch.setattr(registry, "get_action", lambda _id: spec)
+
+    runner.stop()
+    job = runner.submit("check_connection", {})
+    subscription = runner.broker.subscribe(job.id)
+    assert runner.cancel(job.id) is True
+    runner.start()
+    runner.wait_idle()
+
+    assert "yes" not in ran
+    reloaded = JobsRepo(conn).get(job.id)
+    assert reloaded.status == "cancelled"
+    assert reloaded.started_at is None
+
+    statuses = []
+    while not subscription.empty():
+        payload = subscription.get_nowait()
+        if payload.get("type") == "status":
+            statuses.append(payload["status"])
+    assert "running" not in statuses
+
+
+def test_cancel_of_a_job_that_finishes_in_the_race_window_leaves_no_registry_entry(
+    runner, conn, monkeypatch
+):
+    """Simulate the TOCTOU window: cancel() reads a stale 'running' snapshot
+    for a job that has, in reality, already finished — so _execute's own
+    `finally` has already popped its entry from the runner's cancel-event
+    registry. cancel() must report False and must not resurrect that entry
+    (it would otherwise leak for the life of the process, since _execute
+    will never run again for this job_id to pop it).
+    """
+    job = runner.submit("check_connection", {})
+    runner.wait_idle()
+    finished = JobsRepo(conn).get(job.id)
+    assert finished.status == "done"
+    assert job.id not in runner._cancels  # _execute's own finally popped it
+
+    stale_running = finished.model_copy(update={"status": "running"})
+    monkeypatch.setattr(runner._repo, "get", lambda _id: stale_running)
+
+    assert runner.cancel(job.id) is False
+    assert job.id not in runner._cancels
