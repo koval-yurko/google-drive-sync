@@ -22,6 +22,17 @@ _PLAN_FIELDS = (
     "plan_verdict", "plan_match",
 )
 
+# For a `done` row, target_folder/target_name are no longer a *plan* — they
+# are the record of where the file actually is (mark_uploaded sets them to
+# match reality on adoption; an ordinary upload's Plan-computed value is
+# simply correct going forward). Plan's job is choosing destinations for
+# files that have not moved yet, so both `set_plan` and `clear_plan` must
+# leave these two columns alone once upload_status is 'done', however many
+# times Plan is re-run. Every other planning column still resets/recomputes
+# normally — a `done` row's capture time, country, and verdict are still
+# fair game.
+_DONE_PROTECTS = ("target_folder", "target_name")
+
 PLAN_VERDICTS = ("skip", "verify", "upload")
 
 _MEDIA_SELECT = """
@@ -113,17 +124,42 @@ class MediaRepo:
         verdict = fields.get("plan_verdict")
         if verdict is not None and verdict not in PLAN_VERDICTS:
             raise ValueError(f"unknown plan verdict: {verdict!r}")
-        assignments = ", ".join(f"{f} = ?" for f in fields)
+        # See `_DONE_PROTECTS`: a `done` row keeps its current
+        # target_folder/target_name no matter what the caller passes in,
+        # expressed as a CASE against the row's own upload_status so this is
+        # one atomic UPDATE rather than a read-then-write.
+        assignments = []
+        params: list = []
+        for field, value in fields.items():
+            if field in _DONE_PROTECTS:
+                assignments.append(
+                    f"{field} = CASE WHEN upload_status = 'done' "
+                    f"THEN {field} ELSE ? END"
+                )
+            else:
+                assignments.append(f"{field} = ?")
+            params.append(value)
+        params.append(entry_id)
         self._conn.execute(
-            f"UPDATE media SET {assignments} WHERE entry_id = ?",
-            [*fields.values(), entry_id],
+            f"UPDATE media SET {', '.join(assignments)} WHERE entry_id = ?",
+            params,
         )
         self._conn.commit()
 
     def clear_plan(self) -> None:
-        """Reset planning columns so Plan can be re-run; upload results survive."""
-        assignments = ", ".join(f"{f} = NULL" for f in _PLAN_FIELDS)
-        self._conn.execute(f"UPDATE media SET {assignments}")
+        """Reset planning columns so Plan can be re-run; upload results survive.
+
+        `target_folder`/`target_name` are additionally left untouched for
+        `done` rows — see `_DONE_PROTECTS` — so a Plan re-run can never
+        erase (even momentarily) the location an upload already confirmed.
+        """
+        resettable = [f for f in _PLAN_FIELDS if f not in _DONE_PROTECTS]
+        assignments = ", ".join(f"{f} = NULL" for f in resettable)
+        protected = ", ".join(
+            f"{f} = CASE WHEN upload_status = 'done' THEN {f} ELSE NULL END"
+            for f in _DONE_PROTECTS
+        )
+        self._conn.execute(f"UPDATE media SET {assignments}, {protected}")
         self._conn.commit()
 
     def all_media(self) -> list[sqlite3.Row]:

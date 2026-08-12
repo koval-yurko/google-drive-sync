@@ -1,8 +1,10 @@
+import hashlib
 import json
 from datetime import datetime, timezone
 
 import pytest
 
+from photolib.actions import verify_library
 from photolib.actions.base import ActionContext
 from photolib.actions.pair_metadata import Params as PairParams
 from photolib.actions.pair_metadata import run as pair
@@ -220,6 +222,81 @@ def test_rerun_replaces_the_previous_plan(ctx):
     rows = MediaRepo(ctx.conn).all_media()
     assert len(rows) == 2
     assert all(r["target_name"] for r in rows)
+
+
+def test_an_adopted_files_target_survives_a_plan_rerun(ctx):
+    """Regression guard: the module docstring calls Plan 'safe to run
+    repeatedly while tuning', but clear_plan()+set_plan() used to
+    unconditionally overwrite target_folder/target_name for every row —
+    including rows already `done`. For an adopted file (I5) this silently
+    undid that fix the moment an operator re-ran Plan: the recorded foreign
+    location was replaced by a freshly computed month bucket, and Verify
+    Library started reporting the adoption as drift again."""
+    list(run(ctx, Params()))
+    row = by_name(ctx)["IMG_2.MOV"]
+    content = b"mov"   # the real bytes of IMG_2.MOV in ARCHIVE
+    md5 = hashlib.md5(content).hexdigest()
+
+    # Simulate the I5-fixed Organize adopting IMG_2.MOV against a live file
+    # sitting wherever it already was — a folder Plan never chose.
+    ctx.drive.add_folder("elsewhere", "Somewhere Else", parent="photos")
+    ctx.drive.add_file("twin", "IMG_2.MOV", content, parent="elsewhere")
+    MediaRepo(ctx.conn).mark_uploaded(
+        row["entry_id"], "twin", md5,
+        target_folder="Somewhere Else", target_name="IMG_2.MOV",
+    )
+
+    list(run(ctx, Params()))   # re-run Plan, as an operator "tuning" would
+
+    after = by_name(ctx)["IMG_2.MOV"]
+    assert after["target_folder"] == "Somewhere Else"
+    assert after["target_name"] == "IMG_2.MOV"
+
+    # The assertion that matters: a read-only drift scan of live Drive must
+    # not call this adoption "moved outside the app" after the Plan rerun.
+    warnings = [
+        e.message for e in verify_library.run(ctx, verify_library.Params())
+        if e.level == "warn"
+    ]
+    assert not any("moved" in m for m in warnings)
+
+
+def test_an_ordinary_uploads_target_also_survives_a_plan_rerun(ctx):
+    """Not just adoptions: once a row is `done`, its recorded location is a
+    fact, not a re-askable planning question — an ordinary upload's target
+    must survive a Plan rerun too."""
+    list(run(ctx, Params()))
+    row = by_name(ctx)["IMG_2.MOV"]
+    MediaRepo(ctx.conn).mark_uploaded(
+        row["entry_id"], "up1", "deadbeef",
+        target_folder="custom-place", target_name="IMG_2.MOV",
+    )
+
+    list(run(ctx, Params()))
+
+    assert by_name(ctx)["IMG_2.MOV"]["target_folder"] == "custom-place"
+
+
+def test_a_pending_files_target_is_still_recomputed_by_a_plan_rerun(ctx):
+    """The fix must not freeze planning altogether: a file that has not
+    uploaded yet keeps getting a fresh target_folder every time Plan runs.
+    Proven by changing what the bucket *should* be between two runs (a
+    legacy Drive file extending its month range — see
+    test_a_legacy_drive_files_capture_hint_extends_the_bucket) and checking
+    the still-pending row picks up the new value rather than keeping its
+    first run's answer."""
+    list(run(ctx, Params()))
+    assert by_name(ctx)["IMG_1.HEIC"]["upload_status"] == "pending"
+    assert by_name(ctx)["IMG_1.HEIC"]["target_folder"] == "2019-01 - 2023-11"
+
+    ScanRepo(ctx.conn).record_drive_file(
+        drive_id="legacy1", name="legacy.jpg", parent_path="some_old_folder",
+        md5="deadbeef", size=42, mime_type="image/jpeg",
+        capture_hint=int(datetime(2024, 5, 1, tzinfo=timezone.utc).timestamp()),
+    )
+    list(run(ctx, Params()))
+
+    assert by_name(ctx)["IMG_1.HEIC"]["target_folder"] == "2019-01 - 2024-05"
 
 
 def test_name_collisions_within_a_month_are_disambiguated(ctx):

@@ -100,9 +100,84 @@ def test_clear_plan_keeps_upload_results(seeded):
     seeded.commit()
     repo.clear_plan()
     row = repo.all_media()[0]
-    assert row["target_folder"] is None
     assert row["upload_status"] == "done"
     assert row["drive_file_id"] == "x"
+
+
+def test_clear_plan_keeps_a_done_rows_target(seeded):
+    """Once a row is `done`, target_folder/target_name are a record of where
+    the file actually is (see mark_uploaded), not a plan — clearing the plan
+    to let Plan re-run must not erase that, even momentarily. Regression
+    guard for the Plan re-run bug: Plan calls clear_plan() then rebuilds
+    every row's target from scratch, and used to blindly wipe this too."""
+    repo = MediaRepo(seeded)
+    repo.upsert_media(1)
+    repo.set_plan(1, target_folder="2023-11", target_name="IMG_1.HEIC")
+    seeded.execute(
+        "UPDATE media SET upload_status = 'done', drive_file_id = 'x' WHERE entry_id = 1"
+    )
+    seeded.commit()
+    repo.clear_plan()
+    row = repo.all_media()[0]
+    assert row["target_folder"] == "2023-11"
+    assert row["target_name"] == "IMG_1.HEIC"
+
+
+def test_clear_plan_resets_other_plan_columns_for_a_done_row(seeded):
+    """Only target_folder/target_name are protected — a done row's capture
+    time, country, and verdict are still fair game for Plan to recompute."""
+    repo = MediaRepo(seeded)
+    repo.upsert_media(1)
+    repo.set_plan(
+        1, target_folder="2023-11", target_name="IMG_1.HEIC",
+        capture_time=1700000000, country="Poland",
+        plan_verdict="skip", plan_match="drive-1",
+    )
+    seeded.execute(
+        "UPDATE media SET upload_status = 'done', drive_file_id = 'x' WHERE entry_id = 1"
+    )
+    seeded.commit()
+    repo.clear_plan()
+    row = repo.all_media()[0]
+    assert row["target_folder"] == "2023-11"   # protected
+    assert row["capture_time"] is None
+    assert row["country"] is None
+    assert row["plan_verdict"] is None
+    assert row["plan_match"] is None
+
+
+def test_clear_plan_still_resets_target_for_a_pending_row(seeded):
+    repo = MediaRepo(seeded)
+    repo.upsert_media(1)
+    repo.set_plan(1, target_folder="2023-11", target_name="IMG_1.HEIC")
+    repo.clear_plan()
+    row = repo.all_media()[0]
+    assert row["upload_status"] == "pending"
+    assert row["target_folder"] is None
+    assert row["target_name"] is None
+
+
+def test_set_plan_does_not_overwrite_target_for_a_done_row(seeded):
+    """The other half of the same rule (see `_DONE_PROTECTS`): even a direct
+    set_plan call — not just the clear-then-rebuild Plan does — must not
+    move a done row's recorded location out from under it."""
+    repo = MediaRepo(seeded)
+    repo.upsert_media(1)
+    repo.mark_uploaded(1, "x", "abc", target_folder="2023-11", target_name="IMG_1.HEIC")
+    repo.set_plan(1, target_folder="9999-99", target_name="renamed.heic")
+    row = repo.all_media()[0]
+    assert row["target_folder"] == "2023-11"
+    assert row["target_name"] == "IMG_1.HEIC"
+
+
+def test_set_plan_still_writes_target_for_a_pending_row(seeded):
+    repo = MediaRepo(seeded)
+    repo.upsert_media(1)
+    repo.set_plan(1, target_folder="2023-11", target_name="IMG_1.HEIC")
+    repo.set_plan(1, target_folder="2024-01", target_name="renamed.heic")
+    row = repo.all_media()[0]
+    assert row["target_folder"] == "2024-01"
+    assert row["target_name"] == "renamed.heic"
 
 
 def test_all_media_joins_entry_and_archive(seeded):
