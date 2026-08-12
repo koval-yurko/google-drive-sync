@@ -65,3 +65,41 @@ def test_cancel_route_rejects_a_finished_job(client):
 
 def test_cancel_route_404s_on_an_unknown_job(client):
     assert client.post("/api/jobs/nope/cancel").status_code == 404
+
+
+def test_resume_reuses_the_run_id_and_records_the_source(client):
+    job = client.post("/api/actions/check_connection/run", json={}).json()
+    client.app.state.runner.wait_idle()
+    client.app.state.jobs.mark_failed(job["id"], "boom")
+
+    resumed = client.post(f"/api/jobs/{job['id']}/resume").json()
+    assert resumed["run_id"] == job["run_id"]
+    assert resumed["resumed_from"] == job["id"]
+    assert resumed["id"] != job["id"]
+
+
+def test_resume_rejects_a_successful_job(client):
+    job = client.post("/api/actions/check_connection/run", json={}).json()
+    client.app.state.runner.wait_idle()
+    assert client.post(f"/api/jobs/{job['id']}/resume").status_code == 409
+
+
+def test_resume_injects_run_id_only_when_the_action_declares_it(client):
+    """check_connection has no run_id param; extra='forbid' would reject it."""
+    job = client.post("/api/actions/check_connection/run", json={}).json()
+    client.app.state.runner.wait_idle()
+    client.app.state.jobs.mark_failed(job["id"], "boom")
+    resumed = client.post(f"/api/jobs/{job['id']}/resume").json()
+    assert "run_id" not in resumed["params"]
+
+
+def test_items_route_returns_the_ledger(client):
+    from photolib.db.job_items_repo import JobItemsRepo
+
+    job = client.post("/api/actions/check_connection/run", json={}).json()
+    client.app.state.runner.wait_idle()
+    JobItemsRepo(client.app.state.conn).enumerate(
+        job["run_id"], "work", ["a", "b"], job["id"]
+    )
+    body = client.get(f"/api/jobs/{job['id']}/items?phase=work").json()
+    assert [i["item_key"] for i in body] == ["a", "b"]

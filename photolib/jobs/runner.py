@@ -42,9 +42,15 @@ class JobRunner:
             )
         self._thread = None
 
-    def submit(self, action_id: str, params: dict) -> Job:
+    def submit(
+        self,
+        action_id: str,
+        params: dict,
+        run_id: str | None = None,
+        resumed_from: str | None = None,
+    ) -> Job:
         registry.get_action(action_id)  # fail fast on unknown ids
-        job = self._repo.create(action_id, params)
+        job = self._repo.create(action_id, params, run_id, resumed_from)
         with self._outstanding_lock:
             self._outstanding += 1
             self._idle.clear()
