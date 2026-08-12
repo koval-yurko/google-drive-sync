@@ -33,9 +33,17 @@ concrete design. They are implemented as described here:
 2. **`media` gains two columns, not one:** `plan_verdict` and `plan_match`. The
    verdict needs to name the Drive file it matched against, and `duplicate_of`
    already means something else (a parent path, for display).
-3. **Index-phase checkpoints record each folder's child folder ids** in
-   `job_items.detail`. Skipping a folder on resume would otherwise lose its
-   subfolders, because the walk discovers children by listing.
+3. **The Index phase checkpoints as one all-or-nothing item, not per folder.**
+   Discovered while implementing Task 8: `ScanRepo.upsert_drive_files` ends
+   with a full-table sweep (`DELETE FROM drive_files WHERE indexed_at IS NOT
+   <this call's stamp>`), which is how files removed from Drive get dropped.
+   That sweep requires one *complete* walk, so calling it per folder deletes
+   every other folder's rows, and per-folder resumption is fundamentally at
+   odds with it. The walk is read-only, idempotent, and one API call per
+   folder, so re-walking on resume costs seconds — the checkpoint bought
+   almost nothing. `index_destination(drive, conn, folder_id)` therefore
+   collects the whole tree and upserts once, exactly as `scan_archives` does
+   today.
 
 ## File Structure
 
@@ -1401,7 +1409,7 @@ git commit -m "feat: run_phase composes sub-actions into flows"
 - Produces:
   - `DriveFile.app_properties: dict | None` (alias `appProperties`).
   - `DriveFile.location() -> tuple[float, float] | None` — from `imageMediaMetadata.location`, `None` when absent or when both values are zero.
-  - `photolib.scan.index_destination(drive, conn, folder_id: str, *, done: dict[str, list[list[str]]] | None = None, on_folder: Callable[[str, list[list[str]]], None] | None = None) -> int` — walks, upserts `drive_files`, returns the file count. `done` maps an already-walked folder id to its child folders as `[id, name]` pairs; those folders are not listed again, but their children are still traversed *and* keep their correct path, because the name travels with the id. `on_folder(folder_id, child_folders)` fires after each folder is listed. JSON has no tuples, so pairs are lists — they round-trip through `job_items.detail` unchanged.
+  - `photolib.scan.index_destination(drive, conn, folder_id: str) -> int` — walks the tree at any depth, upserts every file into `drive_files` in **one** `upsert_drive_files` call, and returns the file count. One call is required, not a style choice: that method ends with a full-table sweep keyed to its own timestamp, so a second call would delete the first call's rows.
   - `scan_archives._index_destination(ctx, folder_id)` becomes a one-line call to it.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1433,35 +1441,42 @@ def test_walks_every_depth_and_records_paths(conn):
     assert rows == {"f1": "2025-01", "f2": "back_2019/inner"}
 
 
-def test_on_folder_reports_child_folders_as_id_name_pairs(conn):
-    drive = _tree()
-    seen: dict[str, list[list[str]]] = {}
-    index_destination(drive, conn, "root",
-                      on_folder=lambda fid, kids: seen.__setitem__(fid, kids))
-    assert sorted(seen["root"]) == [["m1", "2025-01"], ["nested", "back_2019"]]
-    assert seen["deep"] == []
-
-
-def test_done_folders_are_not_relisted_but_children_still_walk(conn):
+def test_every_folder_is_listed_exactly_once(conn):
     drive = _tree()
     calls: list[str] = []
     original = drive.list_children
     drive.list_children = lambda fid: (calls.append(fid), original(fid))[1]
 
-    index_destination(drive, conn, "root",
-                      done={"nested": [["deep", "inner"]]})
-    assert "nested" not in calls
-    assert "deep" in calls
+    index_destination(drive, conn, "root")
+    assert sorted(calls) == ["deep", "m1", "nested", "root"]
 
 
-def test_a_skipped_folder_still_gives_its_children_the_right_path(conn):
-    """Skipping must not flatten paths — the name travels with the id."""
+def test_the_index_is_written_in_one_sweep(conn):
+    """upsert_drive_files deletes rows not carrying its own timestamp, so a
+    walk that called it per folder would keep only the last folder's files."""
     drive = _tree()
-    index_destination(drive, conn, "root", done={"nested": [["deep", "inner"]]})
-    row = conn.execute(
-        "SELECT parent_path FROM drive_files WHERE drive_id = 'f2'"
-    ).fetchone()
-    assert row["parent_path"] == "back_2019/inner"
+    index_destination(drive, conn, "root")
+    stamps = {
+        r["indexed_at"]
+        for r in conn.execute("SELECT indexed_at FROM drive_files")
+    }
+    assert len(stamps) == 1
+
+
+def test_a_file_gone_from_drive_is_dropped_on_the_next_walk(conn):
+    """The sweep inside upsert_drive_files is how deletions reach the catalog."""
+    index_destination(_tree(), conn, "root")
+
+    smaller = FakeDrive()
+    smaller.add_folder("root", "Photos")
+    smaller.add_folder("m1", "2025-01", parent="root")
+    smaller.add_file("f1", "a.heic", b"aaa", parent="m1", mime_type="image/heic")
+
+    assert index_destination(smaller, conn, "root") == 1
+    remaining = [
+        r["drive_id"] for r in conn.execute("SELECT drive_id FROM drive_files")
+    ]
+    assert remaining == ["f1"]
 ```
 
 Append to `tests/test_drive_client.py`:
@@ -1536,33 +1551,28 @@ and a method after `capture_hint`:
 # photolib/scan.py
 """The destination walk, shared by Scan Archives and Reorganize Folders.
 
-Listing a folder is one API call, and a large library has dozens, so the walk
-reports each folder it finishes and can be told which folders a previous run
-already covered. A skipped folder still yields its subfolders — the caller
-recorded them — because the walk discovers structure only by listing.
+The whole tree is collected before anything is written, because
+`ScanRepo.upsert_drive_files` ends with a sweep that deletes every row not
+carrying that call's timestamp — that sweep is how a file deleted from Drive
+leaves the catalog, and it is only correct after a complete walk. Calling it
+per folder would delete each folder's rows as the next folder arrived.
+
+That also means the walk cannot be resumed part-way: a partial index would
+sweep away everything it had not yet reached. It does not need to be. Listing
+a folder is one API call and the walk is read-only and idempotent, so a
+re-walk costs seconds; the caller checkpoints it as a single unit.
 """
 
 from __future__ import annotations
 
-from typing import Callable
-
 from photolib.db.scan_repo import ScanRepo
 
 
-def index_destination(
-    drive,
-    conn,
-    folder_id: str,
-    *,
-    done: dict[str, list[list[str]]] | None = None,
-    on_folder: Callable[[str, list[list[str]]], None] | None = None,
-) -> int:
+def index_destination(drive, conn, folder_id: str) -> int:
     """Walk `folder_id` at any depth, upsert every file, return the count."""
-    already = done or {}
-    repo = ScanRepo(conn)
+    rows: list[dict] = []
     stack: list[tuple[str, str]] = [(folder_id, "")]
     seen: set[str] = set()
-    total = 0
 
     while stack:
         current, path = stack.pop()
@@ -1570,21 +1580,8 @@ def index_destination(
             continue
         seen.add(current)
 
-        if current in already and current != folder_id:
-            # Its files were upserted last time. Its subfolders were not
-            # necessarily walked, and their paths depend on names only a
-            # listing reveals — so the name was recorded alongside the id.
-            for child_id, child_name in already[current]:
-                stack.append(
-                    (child_id, f"{path}/{child_name}" if path else child_name)
-                )
-            continue
-
-        child_folders: list[list[str]] = []
-        rows: list[dict] = []
         for child in drive.list_children(current):
             if child.is_folder:
-                child_folders.append([child.id, child.name])
                 stack.append(
                     (child.id, f"{path}/{child.name}" if path else child.name)
                 )
@@ -1598,21 +1595,12 @@ def index_destination(
                 }
             )
 
-        # Commit this folder's rows *before* reporting it finished. A caller
-        # that checkpoints on `on_folder` would otherwise skip a folder whose
-        # rows were still in memory when the run died.
-        repo.upsert_drive_files(rows)
-        total += len(rows)
-        if on_folder:
-            on_folder(current, child_folders)
-
-    return total
+    ScanRepo(conn).upsert_drive_files(rows)
+    return len(rows)
 ```
 
-A skipped folder's `drive_files` rows were written last time and are not
-rewritten; only its listing call is saved. `on_folder` fires strictly after
-that folder's rows are committed, so a folder is never marked done on the
-strength of a walk that did not finish.
+`seen` guards against a folder reachable by two paths sending the walk into a
+loop; Drive permits it and an infinite walk would be worse than a wrong path.
 
 In `photolib/actions/scan_archives.py`, replace `_index_destination` with:
 
@@ -3059,7 +3047,7 @@ Phase names and item keys, which the `/api/jobs/{id}/items` view exposes:
 
 | Phase | `item_key` | `detail` |
 | --- | --- | --- |
-| `index` | folder drive id | `{"children": [folder ids]}` |
+| `index` | the root folder's drive id (one item) | `{"files": <count>}` |
 | `enrich` | file drive id | `{"source": "exif", "tags": ["family"]}` |
 | `dedupe` | file drive id (the loser) | the `Removal` as a dict |
 | `repack` | file drive id | the `Move` as a dict |
@@ -3267,32 +3255,22 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         return
 
     # ---- Index -------------------------------------------------------
-    done_folders = {
-        row["item_key"]: (row["detail"] or {}).get("children", [])
-        for row in items.all(run_id, "index", "done")
-    }
-    walked = 0
-
-    def note(folder_id: str, children: list[str]) -> None:
-        nonlocal walked
-        walked += 1
-        items.put(run_id, "index", folder_id, run_id, "done",
-                  {"children": children})
-
+    # One item, all-or-nothing: upsert_drive_files sweeps rows that do not
+    # carry its timestamp, so a half-finished index would delete what it had
+    # not yet reached. Re-walking is cheap and idempotent.
     try:
-        count = scan.index_destination(
-            ctx.drive, ctx.conn, root.id, done=done_folders, on_folder=note
-        )
+        count = scan.index_destination(ctx.drive, ctx.conn, root.id)
     except DriveError as exc:
         yield ProgressEvent(
             f"Cannot read the Global Photos folder: {exc}",
             progress=1.0, level="error",
         )
         return
+    items.put(run_id, "index", root.id, run_id, "done", {"files": count})
     yield ProgressEvent(
-        f"Indexed {count} file(s) across {walked} folder(s).",
+        f"Indexed {count} file(s) under {root.name}.",
         progress=_progress("index", 1, 1), phase=_label("index"),
-        done=walked, total=walked,
+        done=count, total=count,
     )
     if _cancelled(ctx):
         return
