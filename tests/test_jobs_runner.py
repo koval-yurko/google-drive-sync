@@ -238,6 +238,48 @@ def test_cancelling_a_running_job_stops_it_and_keeps_checkpoints(
     assert JobItemsRepo(conn).counts(reloaded.run_id, "work")["done"] >= 1
 
 
+def test_a_generator_that_returns_on_cancellation_is_marked_cancelled_not_done(
+    runner, conn, monkeypatch
+):
+    """Both flows notice cancellation themselves at an item boundary and
+    `return` from their generator, rather than waiting for the runner to
+    `close()` it (see sync_archives.py:74,116 and reorganize_library.py's
+    several `_cancelled(ctx): return` checks). That ends the runner's `for`
+    loop the same way an uncancelled finish does — normal exhaustion, no
+    GeneratorExit — so a runner that only checked the cancel flag *inside*
+    the loop (right after a yield) would never see it and would record the
+    job `done`."""
+    from photolib.actions import registry
+
+    started = threading.Event()
+    may_proceed = threading.Event()
+
+    def self_cancelling(ctx, params):
+        yield ProgressEvent("first", progress=0.3)
+        started.set()
+        # Block until the test has cancelled, so the check below cannot be
+        # outrun by a fast generator racing ahead of cancel() landing.
+        assert may_proceed.wait(timeout=5.0), (
+            "test did not release the generator"
+        )
+        if ctx.cancelled is not None and ctx.cancelled.is_set():
+            return
+        yield ProgressEvent("second", progress=1.0)  # pragma: no cover
+
+    spec = registry.get_action("check_connection")
+    monkeypatch.setattr(spec, "run", self_cancelling)
+    monkeypatch.setattr(registry, "get_action", lambda _id: spec)
+
+    job = runner.submit("check_connection", {})
+    assert started.wait(timeout=5.0)
+    runner.cancel(job.id)
+    may_proceed.set()
+    runner.wait_idle()
+
+    reloaded = JobsRepo(conn).get(job.id)
+    assert reloaded.status == "cancelled"
+
+
 def test_cancelling_a_queued_job_never_starts_it(runner, conn, monkeypatch):
     from photolib.actions import registry
 

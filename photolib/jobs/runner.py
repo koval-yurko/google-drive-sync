@@ -217,12 +217,25 @@ class JobRunner:
                     # Closing raises GeneratorExit at the yield, so the
                     # action's `finally` blocks run and job_items survive.
                     generator.close()
-                    if self._repo.mark_cancelled(job_id):
-                        self._repo.add_event(job_id, "warn", "Cancelled.")
-                        self._emit(job_id, {
-                            "type": "status", "status": "cancelled",
-                        })
-                    return
+                    break
+
+            if cancel.is_set():
+                # Reached either by the `break` above, or because the `for`
+                # loop simply ran out of events. The two flows notice
+                # cancellation themselves at an item boundary and `return`
+                # from their generator rather than waiting to be closed
+                # (see sync_archives.py, reorganize_library.py) — that ends
+                # this loop exactly like a normal, uncancelled finish, so
+                # only this flag, never how the loop ended, can tell the two
+                # apart. Getting this branch wrong records a cancelled run
+                # as `done`.
+                if self._repo.mark_cancelled(job_id):
+                    self._repo.add_event(job_id, "warn", "Cancelled.")
+                    self._emit(job_id, {
+                        "type": "status", "status": "cancelled",
+                    })
+                return
+
             self._repo.mark_done(job_id)
             self._emit(job_id, {"type": "status", "status": "done"})
         except Exception as exc:
