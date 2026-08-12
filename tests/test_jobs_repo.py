@@ -1,6 +1,8 @@
 import threading
 import time
 
+import pytest
+
 from photolib.db.jobs_repo import JobsRepo, _now
 from photolib.db.settings_repo import SettingsRepo
 
@@ -218,6 +220,15 @@ def test_create_accepts_an_explicit_run_id(conn):
     assert second.resumed_from == first.id
 
 
+def test_create_rejects_an_empty_run_id(conn):
+    """T2: `run_id or uuid4().hex` would treat "" the same as absent and
+    silently mint a fresh run — exactly wrong for a `run_id` text input the
+    operator clicked into and cleared. Only `None` may mean "absent"."""
+    repo = JobsRepo(conn)
+    with pytest.raises(ValueError):
+        repo.create("check_connection", {}, run_id="")
+
+
 def test_mark_cancelled(conn):
     repo = JobsRepo(conn)
     job = repo.create("check_connection", {})
@@ -268,3 +279,37 @@ def test_update_progress_leaves_phase_alone_when_not_supplied(conn):
     assert (reloaded.phase, reloaded.items_done, reloaded.items_total) == (
         "Scan (2/5)", 3, 9
     )
+
+
+def test_reconcile_interrupted_fails_a_job_left_running(conn):
+    """I3: nothing watches a `running` job across a restart, and only
+    failed/cancelled jobs are resumable — without this, a job left running
+    when the process died is stuck forever."""
+    repo = JobsRepo(conn)
+    job = repo.create("check_connection", {})
+    repo.mark_running(job.id)
+
+    ids = repo.reconcile_interrupted()
+
+    assert ids == [job.id]
+    reloaded = repo.get(job.id)
+    assert reloaded.status == "failed"
+    assert "interrupted" in reloaded.error
+    assert reloaded.finished_at
+
+
+def test_reconcile_interrupted_leaves_terminal_jobs_alone(conn):
+    repo = JobsRepo(conn)
+    done = repo.create("check_connection", {})
+    repo.mark_done(done.id)
+    failed = repo.create("check_connection", {})
+    repo.mark_failed(failed.id, "boom")
+
+    assert repo.reconcile_interrupted() == []
+    assert repo.get(done.id).status == "done"
+    assert repo.get(failed.id).error == "boom"
+
+
+def test_reconcile_interrupted_is_a_noop_with_nothing_running(conn):
+    repo = JobsRepo(conn)
+    assert repo.reconcile_interrupted() == []

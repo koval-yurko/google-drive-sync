@@ -93,6 +93,36 @@ def test_resume_injects_run_id_only_when_the_action_declares_it(client):
     assert "run_id" not in resumed["params"]
 
 
+def test_a_job_left_running_is_failed_on_the_next_app_start_and_then_resumable(
+    tmp_path, monkeypatch
+):
+    """I3: nothing watches a `running` job across a restart, and only
+    failed/cancelled jobs are resumable (RESUMABLE, above) — without
+    reconciling at startup, a job the previous process left `running` is
+    stuck forever. Two separate `create_app` calls against the same
+    on-disk database stand in for "the process restarted"."""
+    monkeypatch.setenv("PHOTOLIB_HOME", str(tmp_path))
+
+    app1 = create_app(config=Config.load(), drive=FakeDrive())
+    with TestClient(app1) as c1:
+        job = c1.post("/api/actions/check_connection/run", json={}).json()
+        c1.app.state.runner.wait_idle()
+        # Force it back to 'running', standing in for a process that died
+        # mid-job rather than one that finished normally.
+        c1.app.state.jobs.mark_running(job["id"])
+        assert c1.get(f"/api/jobs/{job['id']}").json()["status"] == "running"
+
+    app2 = create_app(config=Config.load(), drive=FakeDrive())
+    with TestClient(app2) as c2:
+        reloaded = c2.get(f"/api/jobs/{job['id']}").json()
+        assert reloaded["status"] == "failed"
+        assert "interrupted" in reloaded["error"]
+
+        resumed = c2.post(f"/api/jobs/{job['id']}/resume").json()
+        assert resumed["run_id"] == reloaded["run_id"]
+        assert resumed["resumed_from"] == job["id"]
+
+
 def test_items_route_returns_the_ledger(client):
     from photolib.db.job_items_repo import JobItemsRepo
 

@@ -68,6 +68,15 @@ def test_action_list_exposes_the_group(client):
     assert all("group" in spec for spec in body)
 
 
+def test_an_empty_run_id_is_rejected_rather_than_treated_as_absent(sync_client):
+    """T2: a `run_id` text input the operator clicked into and cleared must
+    not silently mint a fresh run — it must be refused."""
+    response = sync_client.post(
+        "/api/actions/sync_archives/run", json={"run_id": ""}
+    )
+    assert response.status_code == 422
+
+
 def test_confirming_a_flow_through_the_route_reaches_upload(sync_client):
     """The seam the runner-level run_id fix closes: an operator reads the
     run_id off the unconfirmed job and posts it back with confirm=true,

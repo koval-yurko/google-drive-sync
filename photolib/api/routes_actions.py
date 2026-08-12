@@ -41,5 +41,8 @@ def run_action(action_id: str, params: dict, request: Request) -> dict:
             status_code=422, detail=exc.errors(include_url=False)
         ) from exc
 
-    job = request.app.state.runner.submit(action_id, params)
+    try:
+        job = request.app.state.runner.submit(action_id, params)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return job.model_dump()

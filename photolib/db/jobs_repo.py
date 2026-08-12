@@ -65,6 +65,15 @@ class JobsRepo:
         run_id: str | None = None,
         resumed_from: str | None = None,
     ) -> Job:
+        # `run_id or uuid4().hex` would treat an empty string the same as
+        # "absent" and silently mint a fresh run — exactly the wrong call
+        # for, say, a `run_id` text input the operator clicked into and
+        # cleared. Only `None` means "absent"; "" is a mistake to reject,
+        # not a value to paper over.
+        if run_id == "":
+            raise ValueError(
+                "run_id must not be empty; omit it entirely to start a new run"
+            )
         with self._lock:
             job_id = uuid.uuid4().hex
             self._conn.execute(
@@ -73,8 +82,9 @@ class JobsRepo:
                 " run_id, resumed_from) "
                 "VALUES (?, ?, ?, 'queued', 0.0, ?, ?, ?)",
                 (
-                    job_id, action, json.dumps(params), _now(),
-                    run_id or uuid.uuid4().hex, resumed_from,
+                    job_id, action, json.dumps(params),
+                    _now(), run_id if run_id is not None else uuid.uuid4().hex,
+                    resumed_from,
                 ),
             )
             self._conn.commit()
@@ -122,6 +132,33 @@ class JobsRepo:
                 (error, _now(), job_id),
             )
             self._conn.commit()
+
+    def reconcile_interrupted(self) -> list[str]:
+        """Fail every job left `running` from a process that died mid-run.
+
+        Nothing watches a `running` job across a restart — the row simply
+        sits there forever, and since only `failed`/`cancelled` jobs are
+        resumable (see routes_jobs.RESUMABLE), it would otherwise be stuck:
+        not running, not resumable, not anything. Call this once at startup,
+        before the runner accepts new work. This is not auto-resume — it
+        only fails the job so the operator's own Resume click can reach it;
+        nothing here re-launches anything.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM jobs WHERE status = 'running'"
+            ).fetchall()
+            ids = [row["id"] for row in rows]
+            if ids:
+                self._conn.execute(
+                    "UPDATE jobs SET status = 'failed', "
+                    "error = 'interrupted: the process stopped while this "
+                    "job was running', finished_at = ? "
+                    "WHERE status = 'running'",
+                    (_now(),),
+                )
+                self._conn.commit()
+            return ids
 
     def mark_cancelled(self, job_id: str) -> bool:
         """Mark a job cancelled, but only while it is still queued or
