@@ -2,11 +2,22 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ReviewPage } from './ReviewPage'
+import type { ReviewMedia } from '../api/types'
 
-const listReviewMedia = vi.fn(async (_opts?: object) => ({
+const reviewRow: ReviewMedia = {
+  entry_id: 0, name: '', path: '', archive_name: '',
+  target_folder: null, target_name: null,
+  capture_time: null, capture_source: null, country: null,
+  duplicate_of: null, duplicate_reason: null,
+  upload_status: '', error: null, drive_file_id: null, size: 0,
+  plan_verdict: null, plan_match: null,
+}
+
+const listReviewMedia = vi.fn(async (_opts?: object): Promise<{ total: number; rows: ReviewMedia[] }> => ({
   total: 2,
   rows: [
     {
+      ...reviewRow,
       entry_id: 1,
       name: 'IMG_1.HEIC', path: 'd/IMG_1.HEIC', archive_name: 'a.zip',
       target_folder: '2023-11', target_name: 'IMG_1.HEIC',
@@ -16,6 +27,7 @@ const listReviewMedia = vi.fn(async (_opts?: object) => ({
       upload_status: 'done', error: null, drive_file_id: 'f1', size: 100,
     },
     {
+      ...reviewRow,
       entry_id: 2,
       name: 'IMG_2.MOV', path: 'd/IMG_2.MOV', archive_name: 'a.zip',
       target_folder: '2019-01', target_name: 'IMG_2.MOV',
@@ -101,5 +113,20 @@ describe('ReviewPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /retry/i }))
     await waitFor(() => expect(retryUpload).toHaveBeenCalledWith(2))
     await waitFor(() => expect(listReviewMedia).toHaveBeenCalledTimes(2))
+  })
+
+  it('shows the plan verdict for each file', async () => {
+    listReviewMedia.mockResolvedValueOnce({
+      total: 3,
+      rows: [
+        { ...reviewRow, entry_id: 1, name: 'a.heic', plan_verdict: 'skip' },
+        { ...reviewRow, entry_id: 2, name: 'b.heic', plan_verdict: 'verify' },
+        { ...reviewRow, entry_id: 3, name: 'c.heic', plan_verdict: 'upload' },
+      ],
+    })
+    render(<ReviewPage />)
+    for (const verdict of ['skip', 'verify', 'upload']) {
+      expect(await screen.findByText(verdict)).toBeInTheDocument()
+    }
   })
 })

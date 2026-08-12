@@ -20,6 +20,7 @@ export function ReviewPage() {
   const [rows, setRows] = useState<ReviewMedia[]>([])
   const [total, setTotal] = useState(0)
   const [duplicatesOnly, setDuplicatesOnly] = useState(false)
+  const [verdictFilter, setVerdictFilter] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [reloads, setReloads] = useState(0)
 
@@ -35,6 +36,10 @@ export function ReviewPage() {
       })
       .catch((e) => setError(String(e)))
   }, [duplicatesOnly, reloads])
+
+  const filteredRows = verdictFilter
+    ? rows.filter((row) => row.plan_verdict === verdictFilter)
+    : rows
 
   async function onRetry(entryId: number) {
     try {
@@ -81,8 +86,23 @@ export function ReviewPage() {
         </label>
       </p>
 
+      <p>
+        <label>
+          Verdict{' '}
+          <select
+            value={verdictFilter}
+            onChange={(e) => setVerdictFilter(e.target.value)}
+          >
+            <option value="">All</option>
+            <option value="skip">Skip</option>
+            <option value="verify">Verify</option>
+            <option value="upload">Upload</option>
+          </select>
+        </label>
+      </p>
+
       <p className="muted">
-        Showing {rows.length} of {total}.
+        Showing {filteredRows.length} of {total}.
       </p>
 
       <table>
@@ -93,11 +113,12 @@ export function ReviewPage() {
             <th>Date</th>
             <th>Source</th>
             <th>Already there</th>
+            <th>Verdict</th>
             <th>Status</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {filteredRows.map((row) => (
             <tr key={`${row.archive_name}/${row.path}`}>
               <td>{row.name}</td>
               <td>
@@ -111,6 +132,7 @@ export function ReviewPage() {
               <td className={row.duplicate_of ? 'warn' : undefined}>
                 {row.duplicate_of ?? '—'}
               </td>
+              <td>{row.plan_verdict ?? '—'}</td>
               <td className={row.upload_status === 'error' ? 'error' : undefined}>
                 {row.upload_status}
                 {row.error ? ` — ${row.error}` : ''}

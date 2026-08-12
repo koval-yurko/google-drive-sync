@@ -47,6 +47,11 @@ export interface Job {
   created_at: string
   started_at: string | null
   finished_at: string | null
+  run_id: string | null
+  resumed_from: string | null
+  phase: string | null
+  items_done: number
+  items_total: number
 }
 
 export interface JobEvent {
@@ -87,6 +92,8 @@ export interface ReviewMedia {
   error: string | null
   drive_file_id: string | null
   size: number
+  plan_verdict: string | null
+  plan_match: string | null
 }
 
 export interface Tag {

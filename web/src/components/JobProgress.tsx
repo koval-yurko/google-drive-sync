@@ -40,6 +40,12 @@ export function JobProgress({ jobId }: { jobId: string }) {
         {job.message && ` — ${job.message}`}
       </p>
       <progress value={job.progress} max={1} />
+      {job.phase && (
+        <p className="job-phase">
+          {job.phase}
+          {job.items_total > 0 && ` · ${job.items_done} / ${job.items_total}`}
+        </p>
+      )}
       {job.error && <pre className="error">{job.error}</pre>}
       <div className="log" ref={logRef}>
         {events.map((event) => (

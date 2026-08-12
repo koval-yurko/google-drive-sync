@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { listJobs } from '../api/client'
+import { cancelJob, listJobs, resumeJob } from '../api/client'
 import type { Job } from '../api/types'
 import { JobProgress } from '../components/JobProgress'
 
@@ -8,10 +8,11 @@ export function JobsPage() {
   const [selected, setSelected] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const refresh = () => listJobs().then(setJobs).catch((e) => setError(String(e)))
+
   useEffect(() => {
-    const load = () => listJobs().then(setJobs).catch((e) => setError(String(e)))
-    load()
-    const timer = setInterval(load, 3000)
+    refresh()
+    const timer = setInterval(refresh, 3000)
     return () => clearInterval(timer)
   }, [])
 
@@ -37,7 +38,13 @@ export function JobsPage() {
               <td>{Math.round(job.progress * 100)}%</td>
               <td>{job.started_at ?? '—'}</td>
               <td>
-                <button onClick={() => setSelected(job.id)}>Details</button>
+                <button onClick={() => setSelected(job.id)}>Details</button>{' '}
+                {(job.status === 'queued' || job.status === 'running') && (
+                  <button onClick={() => cancelJob(job.id).then(refresh)}>Cancel</button>
+                )}
+                {(job.status === 'failed' || job.status === 'cancelled') && (
+                  <button onClick={() => resumeJob(job.id).then(refresh)}>Resume</button>
+                )}
               </td>
             </tr>
           ))}
