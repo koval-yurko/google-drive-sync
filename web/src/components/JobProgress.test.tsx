@@ -37,4 +37,18 @@ describe('JobProgress', () => {
     await screen.findByText(/Upload \(5\/5\)/)
     expect(screen.queryByText(/\d+ \/ \d+/)).not.toBeInTheDocument()
   })
+
+  it('shows the run_id, so a dry run can be confirmed against exactly it', async () => {
+    getJob.mockResolvedValue(job)
+    render(<JobProgress jobId="j1" />)
+    expect(await screen.findByText('r1')).toBeInTheDocument()
+  })
+
+  it('reports every fetched job to onUpdate', async () => {
+    getJob.mockResolvedValue(job)
+    const onUpdate = vi.fn()
+    render(<JobProgress jobId="j1" onUpdate={onUpdate} />)
+    await screen.findByText(/Upload \(5\/5\)/)
+    expect(onUpdate).toHaveBeenCalledWith(job)
+  })
 })
