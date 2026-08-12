@@ -54,6 +54,27 @@ def test_counts_and_clear(conn):
     assert repo.counts("run1", "upload") == {}
 
 
+def test_marking_an_item_failed_preserves_its_persisted_plan(conn):
+    """The plan is the checkpoint: `put(..., "pending", plan)` writes what a
+    resume must execute, and a later `mark(..., "failed", {"error": ...})`
+    must not blow that away — it should fold the error onto the plan, not
+    replace it."""
+    repo = JobItemsRepo(conn)
+    repo.put("run1", "dedupe", "f1", "job1", "pending", {"to": "2025-01"})
+    repo.mark("run1", "dedupe", "f1", "failed", {"error": "boom"})
+    row = repo.all("run1", "dedupe")[0]
+    assert row["state"] == "failed"
+    assert row["detail"] == {"to": "2025-01", "error": "boom"}
+
+
+def test_marking_failed_with_no_prior_detail_just_sets_it(conn):
+    repo = JobItemsRepo(conn)
+    repo.enumerate("run1", "upload", ["a"], "job1")
+    repo.mark("run1", "upload", "a", "failed", {"error": "boom"})
+    row = repo.all("run1", "upload")[0]
+    assert row["detail"] == {"error": "boom"}
+
+
 def test_unknown_state_is_rejected(conn):
     repo = JobItemsRepo(conn)
     with pytest.raises(ValueError):

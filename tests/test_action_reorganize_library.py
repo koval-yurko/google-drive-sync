@@ -7,6 +7,8 @@ from photolib.actions.base import ActionContext
 from photolib.config import Config
 from photolib.db.job_items_repo import JobItemsRepo
 from photolib.db.settings_repo import PHOTOS_ROOT, FolderRef, SettingsRepo
+from photolib.db.tags_repo import TagsRepo
+from photolib.drive.errors import DriveError, NotFoundError
 from tests.fakes.fake_drive import FakeDrive
 
 
@@ -95,6 +97,56 @@ def test_resume_does_not_repeat_finished_items(reorg_context, conn, drive):
         reorg_context, reorganize_library.Params(confirm=True)
     ))
     assert first["item_key"] not in drive.trashed
+
+
+def test_a_failed_dedupe_item_resumes_from_its_preserved_plan(
+    reorg_context, conn, drive
+):
+    """Regression coverage for C3: `items.mark(..., "failed", {"error": ...})`
+    used to overwrite the persisted `dedupe.Removal` plan wholesale, so a
+    resumed run's `dedupe.Removal(**row["detail"])` raised TypeError forever
+    for that run_id. Simulate an item that failed on an earlier confirm
+    attempt (exactly the state a real failure would leave), then confirm
+    again and check it completes instead of blowing up."""
+    list(reorganize_library.run(reorg_context, reorganize_library.Params()))
+    items = JobItemsRepo(conn)
+    doomed = items.pending(reorg_context.run_id, "dedupe")[0]
+    items.mark(
+        reorg_context.run_id, "dedupe", doomed["item_key"], "failed",
+        {"error": "simulated transient failure"},
+    )
+    events = list(reorganize_library.run(
+        reorg_context, reorganize_library.Params(confirm=True)
+    ))
+    assert not any(e.level == "error" for e in events)
+    assert doomed["item_key"] in drive.trashed
+    done_keys = {
+        r["item_key"] for r in items.all(reorg_context.run_id, "dedupe", "done")
+    }
+    assert doomed["item_key"] in done_keys
+
+
+def test_a_failed_repack_item_resumes_from_its_preserved_plan(
+    reorg_context, conn, drive
+):
+    """Same regression as above, for Repack's `repack.Move(**row["detail"])`."""
+    list(reorganize_library.run(reorg_context, reorganize_library.Params()))
+    items = JobItemsRepo(conn)
+    doomed = items.pending(reorg_context.run_id, "repack")[0]
+    items.mark(
+        reorg_context.run_id, "repack", doomed["item_key"], "failed",
+        {"error": "simulated transient failure"},
+    )
+    events = list(reorganize_library.run(
+        reorg_context, reorganize_library.Params(confirm=True)
+    ))
+    assert not any(e.level == "error" for e in events)
+    moved_ids = {drive_id for drive_id, _ in drive.moves}
+    assert doomed["item_key"] in moved_ids
+    done_keys = {
+        r["item_key"] for r in items.all(reorg_context.run_id, "repack", "done")
+    }
+    assert doomed["item_key"] in done_keys
 
 
 def test_dedupe_runs_before_repack(reorg_context, conn):
@@ -211,6 +263,96 @@ def test_a_stale_source_folder_does_not_abort_the_confirmed_run(conn, tmp_path):
     # run did not die on z's failure.
     assert any(e.phase and e.phase.startswith("Sweep") for e in events)
     assert "f-real" in drive.trashed
+    assert events[-1].level != "error"
+
+
+def test_enrich_isolates_a_drive_error_and_the_flow_keeps_going(
+    reorg_context, conn, drive
+):
+    """I1: one file trashed between Index and Enrich (a plain 404 from
+    `ctx.drive.get_file`) must not fail the whole flow before Dedupe,
+    Repack and Sweep run."""
+    real_get_file = drive.get_file
+
+    def flaky(file_id):
+        if file_id == "d-dup1":
+            raise NotFoundError(f"no such file: {file_id}")
+        return real_get_file(file_id)
+
+    drive.get_file = flaky
+
+    events = list(reorganize_library.run(
+        reorg_context, reorganize_library.Params()
+    ))
+
+    error_events = [e for e in events if e.level == "error"]
+    assert any("d-dup1" in e.message for e in error_events)
+    assert any(e.phase and e.phase.startswith("Dedupe") for e in events)
+    assert any(e.phase and e.phase.startswith("Repack") for e in events)
+    failed = JobItemsRepo(conn).all(reorg_context.run_id, "enrich", "failed")
+    assert any(r["item_key"] == "d-dup1" for r in failed)
+
+
+def test_enrich_isolates_a_duplicate_tag_error_and_the_flow_keeps_going(
+    conn, tmp_path
+):
+    """I1: a `t_*` appProperty whose suffix collides with an existing
+    canonical slug (`t_Family` -> ensure("Family") -> create("Family") ->
+    slug "family" already taken) must not fail the whole flow either."""
+    drive = FakeDrive()
+    drive.add_folder("photos", "Photos")
+    drive.add_file(
+        "d1", "IMG_1.HEIC", b"one", parent="photos",
+        app_properties={"t_Family": "1"},
+    )
+    TagsRepo(conn).create("family")  # the canonical slug is already taken
+
+    run_id = "run-dup-tag"
+    ctx = _make_ctx(conn, drive, tmp_path, run_id)
+
+    events = list(reorganize_library.run(ctx, reorganize_library.Params()))
+
+    error_events = [e for e in events if e.level == "error"]
+    assert any("d1" in e.message for e in error_events)
+    assert any(e.phase and e.phase.startswith("Dedupe") for e in events)
+    assert any(e.phase and e.phase.startswith("Repack") for e in events)
+    failed = JobItemsRepo(conn).all(run_id, "enrich", "failed")
+    assert any(r["item_key"] == "d1" for r in failed)
+
+
+def test_sweep_isolates_a_drive_error_and_keeps_going(conn, tmp_path):
+    """I2: `repack.apply_sweep` raising on one folder must not abort the run
+    after Dedupe and Repack have already written to Drive — the same
+    per-item treatment as Dedupe and Repack already get."""
+    drive = FakeDrive()
+    drive.add_folder("photos", "Photos")
+    drive.add_folder("empty-a", "empty-a", parent="photos")
+    drive.add_folder("empty-b", "empty-b", parent="photos")
+    run_id = "run-sweep-error"
+    ctx = _make_ctx(conn, drive, tmp_path, run_id)
+    # A confirmed run with no prior dry run needs the "a plan exists" sentinel
+    # a dry run would otherwise have written.
+    JobItemsRepo(conn).put(run_id, "index", "photos", run_id, "done", {})
+
+    real_trash = drive.trash
+
+    def flaky(file_id):
+        if file_id == "empty-a":
+            raise DriveError("boom")
+        return real_trash(file_id)
+
+    drive.trash = flaky
+
+    events = list(reorganize_library.run(
+        ctx, reorganize_library.Params(confirm=True)
+    ))
+
+    assert "empty-b" in drive.trashed
+    assert "empty-a" not in drive.trashed
+    error_events = [e for e in events if e.level == "error"]
+    assert any("empty-a" in e.message for e in error_events)
+    failed = JobItemsRepo(conn).all(run_id, "sweep", "failed")
+    assert any(r["item_key"] == "empty-a" for r in failed)
     assert events[-1].level != "error"
 
 

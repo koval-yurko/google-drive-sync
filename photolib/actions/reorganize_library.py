@@ -20,7 +20,7 @@ from photolib.actions.phases import phase_label
 from photolib.db.job_items_repo import JobItemsRepo
 from photolib.db.scan_repo import ScanRepo
 from photolib.db.settings_repo import PHOTOS_ROOT
-from photolib.db.tags_repo import TagsRepo
+from photolib.db.tags_repo import DuplicateTagError, TagsRepo
 from photolib.drive.errors import DriveError
 
 ID = "reorganize_library"
@@ -121,18 +121,35 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     for index, row in enumerate(pending, start=1):
         if _cancelled(ctx):
             return
-        file = ctx.drive.get_file(row["drive_id"])
-        result = enrich.enrichment_for(file, geocoder)
-        scans.set_enrichment(
-            row["drive_id"],
-            capture_hint=result.capture_hint,
-            latitude=result.latitude,
-            longitude=result.longitude,
-            country=result.country,
-            metadata_source=result.metadata_source,
-        )
-        for slug in result.tag_slugs:
-            tags.add_files(tags.ensure(slug)["id"], [row["drive_id"]])
+        try:
+            file = ctx.drive.get_file(row["drive_id"])
+            result = enrich.enrichment_for(file, geocoder)
+            scans.set_enrichment(
+                row["drive_id"],
+                capture_hint=result.capture_hint,
+                latitude=result.latitude,
+                longitude=result.longitude,
+                country=result.country,
+                metadata_source=result.metadata_source,
+            )
+            for slug in result.tag_slugs:
+                tags.add_files(tags.ensure(slug)["id"], [row["drive_id"]])
+        except (DriveError, DuplicateTagError, ValueError) as exc:
+            # One file trashed between Index and Enrich, or one t_* tag
+            # whose suffix collides with an existing canonical slug, must
+            # not fail the whole flow before Dedupe, Repack and Sweep run —
+            # same reasoning as Repack's per-item guard, below.
+            # set_enrichment is never called on this path, so scans still
+            # reports the row `unenriched` and a later run retries it.
+            items.put(run_id, "enrich", row["drive_id"], run_id, "failed",
+                      {"error": str(exc)})
+            yield ProgressEvent(
+                f"{row['drive_id']}: {exc}",
+                progress=_progress("enrich", index, total),
+                phase=_label("enrich"), level="error",
+                done=index, total=total,
+            )
+            continue
         items.put(run_id, "enrich", row["drive_id"], run_id, "done",
                   {"source": result.metadata_source, "tags": result.tag_slugs})
         if index % 50 == 0 or index == total:
@@ -196,7 +213,12 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     for index, row in enumerate(outstanding, start=1):
         if _cancelled(ctx):
             return
-        removal = dedupe.Removal(**row["detail"])
+        # mark(..., "failed", ...) folds {"error": ...} onto the persisted
+        # plan rather than replacing it (job_items_repo.mark), so a
+        # previously-failed row's detail carries both; strip it back out
+        # before rebuilding the dataclass the plan actually describes.
+        plan = {k: v for k, v in row["detail"].items() if k != "error"}
+        removal = dedupe.Removal(**plan)
         try:
             dedupe.apply_removal(ctx.writer, removal, ctx.conn)
         except DriveError as exc:
@@ -239,7 +261,11 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     for index, row in enumerate(outstanding, start=1):
         if _cancelled(ctx):
             return
-        move = repack.Move(**row["detail"])
+        # Same as the Dedupe loop above: a retried item's detail carries an
+        # "error" folded onto its plan (job_items_repo.mark), which is not
+        # a Move field.
+        plan = {k: v for k, v in row["detail"].items() if k != "error"}
+        move = repack.Move(**plan)
         try:
             move_folder_ids = folder_ids
             if move.from_path not in folder_ids:
@@ -280,7 +306,22 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     for index, (folder_id, name) in enumerate(empty, start=1):
         if _cancelled(ctx):
             return
-        repack.apply_sweep(ctx.writer, folder_id)
+        try:
+            repack.apply_sweep(ctx.writer, folder_id)
+        except DriveError as exc:
+            # One folder Drive won't trash — already gone, permissions,
+            # whatever — must not abort the run after Dedupe and Repack
+            # have already written to Drive; same per-item treatment as
+            # Repack's guard, above.
+            items.put(run_id, "sweep", folder_id, run_id, "failed",
+                      {"name": name, "error": str(exc)})
+            yield ProgressEvent(
+                f"{name}: {exc}",
+                progress=_progress("sweep", index, len(empty)),
+                phase=_label("sweep"), level="error",
+                done=index, total=len(empty),
+            )
+            continue
         items.put(run_id, "sweep", folder_id, run_id, "done", {"name": name})
         yield ProgressEvent(
             f"Trashed the now-empty folder {name}.",
@@ -291,6 +332,6 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     yield ProgressEvent(
         f"Done. {len(items.all(run_id, 'dedupe', 'done'))} duplicate(s) "
         f"trashed, {len(items.all(run_id, 'repack', 'done'))} file(s) moved, "
-        f"{len(empty)} folder(s) swept.",
+        f"{len(items.all(run_id, 'sweep', 'done'))} folder(s) swept.",
         progress=1.0,
     )
