@@ -22,6 +22,8 @@ _PLAN_FIELDS = (
     "plan_verdict", "plan_match",
 )
 
+PLAN_VERDICTS = ("skip", "verify", "upload")
+
 _MEDIA_SELECT = """
     SELECT m.*, e.path, e.name, e.size AS entry_size, e.crc32,
            a.name AS archive_name, a.drive_id AS archive_drive_id
@@ -106,6 +108,9 @@ class MediaRepo:
         unknown = set(fields) - set(_PLAN_FIELDS)
         if unknown:
             raise ValueError(f"unknown planning field(s): {sorted(unknown)}")
+        verdict = fields.get("plan_verdict")
+        if verdict is not None and verdict not in PLAN_VERDICTS:
+            raise ValueError(f"unknown plan verdict: {verdict!r}")
         assignments = ", ".join(f"{f} = ?" for f in fields)
         self._conn.execute(
             f"UPDATE media SET {assignments} WHERE entry_id = ?",

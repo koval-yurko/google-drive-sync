@@ -182,3 +182,26 @@ def test_clear_plan_resets_the_verdict(conn, seeded_entry):
     repo.clear_plan()
     row = repo.all_media()[0]
     assert row["plan_verdict"] is None and row["plan_match"] is None
+
+
+@pytest.mark.parametrize("verdict", ["skip", "verify", "upload"])
+def test_set_plan_accepts_every_valid_verdict(conn, seeded_entry, verdict):
+    repo = MediaRepo(conn)
+    repo.set_plan(seeded_entry, plan_verdict=verdict)
+    assert repo.all_media()[0]["plan_verdict"] == verdict
+
+
+def test_set_plan_rejects_an_invalid_verdict(conn, seeded_entry):
+    repo = MediaRepo(conn)
+    with pytest.raises(ValueError):
+        repo.set_plan(seeded_entry, plan_verdict="wobbly")
+
+
+def test_set_plan_allows_a_null_verdict_and_clear_plan_still_resets_it(conn, seeded_entry):
+    repo = MediaRepo(conn)
+    repo.set_plan(seeded_entry, plan_verdict=None)   # unplanned rows have no verdict yet
+    assert repo.all_media()[0]["plan_verdict"] is None
+    repo.set_plan(seeded_entry, plan_verdict="skip", plan_match="drive-1")
+    repo.clear_plan()
+    row = repo.all_media()[0]
+    assert row["plan_verdict"] is None and row["plan_match"] is None
