@@ -2837,9 +2837,9 @@ proof the extraction is faithful.
 **Interfaces:**
 - Consumes: `photolib.scan.index_destination` (Task 8) is *not* used here; these planners read `drive_files` and Drive directly, exactly as the actions do today.
 - Produces:
-  - `photolib.dedupe.Removal` dataclass: `drive_id: str`, `name: str`, `parent_path: str`, `md5: str`, `keeper_id: str`, `keeper_path: str`.
-  - `photolib.dedupe.plan_removals(drive, conn, root_id: str) -> tuple[list[Removal], list[str]]` — the removals, and the drive ids of zero-byte files reported but left alone.
-  - `photolib.dedupe.apply_removal(writer, removal: Removal, conn) -> None` — trashes the file and stamps `drive_files.trashed_at`.
+  - `photolib.dedupe.Removal` dataclass: `drive_id: str`, `name: str`, `parent_path: str`, `md5: str`, `size: int`, `keeper_id: str`, `keeper_path: str`. `size` is carried because the walk already knows it — without it the action must re-fetch every doomed file to report how much space it frees, which adds a failure surface to a report-only run that previously could not fail once the walk succeeded.
+  - `photolib.dedupe.plan_removals(drive, conn, root_id: str) -> tuple[list[Removal], list[str], int]` — the removals, the drive ids of zero-byte files reported but left alone, and the total number of live files scanned. The count is returned rather than recomputed because the action's summary line reports it and a second walk to recover it would double the API cost of the phase.
+  - `photolib.dedupe.apply_removal(writer, removal, conn, stamp: str | None = None)` — `stamp` lets one batch share a single `trashed_at`, as the unsplit action did; `None` means "now".
   - `photolib.repack.Move` dataclass: `drive_id: str`, `name: str`, `new_name: str`, `from_path: str`, `to_folder: str`.
   - `photolib.repack.plan_moves(drive, conn, root_id: str, *, exclude: set[str] = frozenset()) -> list[Move]` — `exclude` drops files that dedupe is about to trash, so the packing does not reserve space for them.
   - `photolib.repack.apply_move(writer, conn, move: Move, folder_ids: dict[str, str]) -> None`.
@@ -2866,7 +2866,7 @@ def _library() -> FakeDrive:
 
 
 def test_one_copy_of_each_group_survives(conn):
-    removals, _ = plan_removals(_library(), conn, "root")
+    removals, _, _ = plan_removals(_library(), conn, "root")
     assert [r.drive_id for r in removals] == ["b"]
     assert removals[0].keeper_id == "a"
 
@@ -2892,7 +2892,7 @@ def _verified_upload(conn, drive_id: str) -> None:
 
 def test_a_verified_upload_is_preferred_as_the_keeper(conn):
     _verified_upload(conn, "b")
-    removals, _ = plan_removals(_library(), conn, "root")
+    removals, _, _ = plan_removals(_library(), conn, "root")
     assert [r.drive_id for r in removals] == ["a"]
     assert removals[0].keeper_id == "b"
 
@@ -2901,7 +2901,7 @@ def test_zero_byte_files_are_reported_not_removed(conn):
     drive = _library()
     drive.add_file("z1", "empty1.heic", b"", parent="m1")
     drive.add_file("z2", "empty2.heic", b"", parent="m1")
-    removals, zero = plan_removals(drive, conn, "root")
+    removals, zero, scanned = plan_removals(drive, conn, "root")
     assert set(zero) == {"z1", "z2"}
     assert "z1" not in {r.drive_id for r in removals}
 ```
@@ -3312,7 +3312,9 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
 
     # ---- Dedupe (plan) -----------------------------------------------
     if not items.all(run_id, "dedupe"):
-        removals, zero_byte = dedupe.plan_removals(ctx.drive, ctx.conn, root.id)
+        removals, zero_byte, _scanned = dedupe.plan_removals(
+            ctx.drive, ctx.conn, root.id
+        )
         for removal in removals:
             items.put(run_id, "dedupe", removal.drive_id, run_id, "pending",
                       removal.__dict__)
