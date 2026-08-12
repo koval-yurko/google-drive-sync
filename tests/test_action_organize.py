@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+import threading
 
 import pytest
 
@@ -242,6 +243,39 @@ def test_an_unusable_downloads_folder_stops_the_run_before_any_upload(ctx):
 def test_a_single_worker_works_too(ctx):
     list(run(ctx, Params(workers=1)))
     assert len(uploaded_names(ctx)) == 2
+
+
+def test_cancelling_stops_new_uploads_from_starting(ctx, monkeypatch):
+    """C4 regression: every row used to be queued into the pool before the
+    first yield, so a cancellation requested mid-run still let every
+    already-queued row upload — the runner thread was simply blocked until
+    they all finished. `ctx.cancelled` must be checked before a worker
+    starts moving bytes, not only in the reporting loop after the fact."""
+    ctx.cancelled = threading.Event()
+    real_transfer = organize.transfer_entry
+
+    def spy(**kwargs):
+        result = real_transfer(**kwargs)
+        # Single worker: this runs to completion, and only then does the
+        # pool's one worker thread become free to pick up the second row —
+        # so setting the flag here lands before that row's `move()` starts,
+        # deterministically, with no sleep needed.
+        ctx.cancelled.set()
+        return result
+
+    monkeypatch.setattr("photolib.actions.organize.transfer_entry", spy)
+    list(run(ctx, Params(workers=1)))
+
+    found = uploaded_names(ctx)
+    assert len(found) == 1
+
+    rows = {r["name"]: r for r in MediaRepo(ctx.conn).all_media()}
+    untouched = [r for r in rows.values() if r["name"] not in found]
+    assert len(untouched) == 1
+    # Nothing happened to it: still pending, no session, no attempts — a
+    # plain re-run picks it up exactly as if this run had never started.
+    assert untouched[0]["upload_status"] == "pending"
+    assert untouched[0]["upload_session_uri"] is None
 
 
 def test_a_live_transfer_is_visible_while_it_moves(ctx, monkeypatch):
