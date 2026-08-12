@@ -173,3 +173,40 @@ def test_detail_returns_one_file(library):
 
 def test_detail_of_an_unknown_file_is_none(library):
     assert library.detail("nope") is None
+
+
+def test_country_falls_back_to_the_drive_row(conn):
+    conn.execute(
+        "INSERT INTO drive_files "
+        "(drive_id, name, parent_path, md5, size, mime_type, country, "
+        " capture_hint, metadata_source) "
+        "VALUES ('d1', 'a.heic', '2025-01', 'x', 3, 'image/heic', 'Greece', "
+        " 1752489000, 'exif')"
+    )
+    conn.commit()
+    row = LibraryRepo(conn).list_files(Filters(), 10, 0)["rows"][0]
+    assert row["country"] == "Greece"
+    assert row["capture_time"] == 1752489000
+
+
+def test_country_filter_matches_a_drive_only_file(conn):
+    conn.execute(
+        "INSERT INTO drive_files "
+        "(drive_id, name, parent_path, md5, size, mime_type, country) "
+        "VALUES ('d1', 'a.heic', '2025-01', 'x', 3, 'image/heic', 'Greece')"
+    )
+    conn.commit()
+    assert LibraryRepo(conn).list_files(
+        Filters(country="Greece"), 10, 0
+    )["total"] == 1
+
+
+def test_country_facet_counts_drive_only_files(conn):
+    conn.execute(
+        "INSERT INTO drive_files "
+        "(drive_id, name, parent_path, md5, size, mime_type, country) "
+        "VALUES ('d1', 'a.heic', '2025-01', 'x', 3, 'image/heic', 'Greece')"
+    )
+    conn.commit()
+    countries = LibraryRepo(conn).facets()["countries"]
+    assert {"value": "Greece", "count": 1} in countries
