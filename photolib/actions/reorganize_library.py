@@ -1,0 +1,265 @@
+"""Make the Global Photos folder tidy, whatever route its files took.
+
+Five phases behind one confirm gate. The dry run writes every intended
+operation into `job_items`; confirming reads those rows back and executes
+exactly what was reported, marking each done as it goes. A killed confirm run
+therefore resumes rather than re-planning, and the plan you approved is the
+plan that runs.
+
+Dedupe runs before Repack deliberately: a file about to be trashed must not
+reserve space in a bucket, or every dedupe would leave the layout wrong.
+"""
+
+from __future__ import annotations
+
+from typing import Iterator
+
+from photolib import dedupe, enrich, places, repack, scan
+from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
+from photolib.actions.phases import phase_label
+from photolib.db.job_items_repo import JobItemsRepo
+from photolib.db.scan_repo import ScanRepo
+from photolib.db.settings_repo import PHOTOS_ROOT
+from photolib.db.tags_repo import TagsRepo
+from photolib.drive.errors import DriveError
+
+ID = "reorganize_library"
+TITLE = "Reorganize Folders"
+DESCRIPTION = (
+    "Index the Global Photos folder, fill in dates, countries and tags from "
+    "Drive, remove duplicate copies, repack everything into ~100-file bucket "
+    "folders and trash the folders left empty. Reports what it would do "
+    "unless you confirm."
+)
+ORDER = 2
+GROUP = "flow"
+
+PHASES = ("index", "enrich", "dedupe", "repack", "sweep")
+_LABELS = {
+    "index": ("Index", (0.00, 0.20), 1),
+    "enrich": ("Enrich", (0.20, 0.45), 2),
+    "dedupe": ("Dedupe", (0.45, 0.60), 3),
+    "repack": ("Repack", (0.60, 0.90), 4),
+    "sweep": ("Sweep", (0.90, 1.00), 5),
+}
+
+
+class Params(ActionParams):
+    confirm: bool = False
+    run_id: str | None = None
+
+
+def _label(phase: str) -> str:
+    name, _, index = _LABELS[phase]
+    return phase_label(name, index, len(PHASES))
+
+
+def _progress(phase: str, done: int, total: int) -> float:
+    _, (low, high), _ = _LABELS[phase]
+    return low + (high - low) * (done / total if total else 1.0)
+
+
+def _cancelled(ctx: ActionContext) -> bool:
+    return ctx.cancelled is not None and ctx.cancelled.is_set()
+
+
+def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
+    items = JobItemsRepo(ctx.conn)
+    scans = ScanRepo(ctx.conn)
+    tags = TagsRepo(ctx.conn)
+    run_id = ctx.run_id or "adhoc"
+
+    root = ctx.settings.get_folder(PHOTOS_ROOT)
+    if root is None:
+        yield ProgressEvent(
+            "The Global Photos folder must be configured in Settings first.",
+            progress=1.0, level="error",
+        )
+        return
+
+    if params.confirm and not items.all(run_id, "dedupe") \
+            and not items.all(run_id, "repack"):
+        yield ProgressEvent(
+            "There is no plan for this run to confirm. Run Reorganize Folders "
+            "without confirm first, read what it reports, then confirm that "
+            "run.",
+            progress=1.0, level="error",
+        )
+        return
+
+    # ---- Index -------------------------------------------------------
+    # One item, all-or-nothing: upsert_drive_files sweeps rows that do not
+    # carry its timestamp, so a half-finished index would delete what it had
+    # not yet reached. Re-walking is cheap and idempotent.
+    try:
+        count = scan.index_destination(ctx.drive, ctx.conn, root.id)
+    except DriveError as exc:
+        yield ProgressEvent(
+            f"Cannot read the Global Photos folder: {exc}",
+            progress=1.0, level="error",
+        )
+        return
+    items.put(run_id, "index", root.id, run_id, "done", {"files": count})
+    yield ProgressEvent(
+        f"Indexed {count} file(s) under {root.name}.",
+        progress=_progress("index", 1, 1), phase=_label("index"),
+        done=count, total=count,
+    )
+    if _cancelled(ctx):
+        return
+
+    # ---- Enrich ------------------------------------------------------
+    pending = scans.unenriched()
+    geocoder = places.Geocoder(
+        ctx.conn, places.api_key_from_env(ctx.config.repo_root)
+    )
+    total = len(pending)
+    for index, row in enumerate(pending, start=1):
+        if _cancelled(ctx):
+            return
+        file = ctx.drive.get_file(row["drive_id"])
+        result = enrich.enrichment_for(file, geocoder)
+        scans.set_enrichment(
+            row["drive_id"],
+            capture_hint=result.capture_hint,
+            latitude=result.latitude,
+            longitude=result.longitude,
+            country=result.country,
+            metadata_source=result.metadata_source,
+        )
+        for slug in result.tag_slugs:
+            tags.add_files(tags.ensure(slug)["id"], [row["drive_id"]])
+        items.put(run_id, "enrich", row["drive_id"], run_id, "done",
+                  {"source": result.metadata_source, "tags": result.tag_slugs})
+        if index % 50 == 0 or index == total:
+            yield ProgressEvent(
+                f"Enriched {index} of {total}.",
+                progress=_progress("enrich", index, total),
+                phase=_label("enrich"), done=index, total=total,
+            )
+    if not total:
+        yield ProgressEvent(
+            "Nothing new to enrich.", progress=_progress("enrich", 1, 1),
+            phase=_label("enrich"), done=0, total=0,
+        )
+
+    # ---- Dedupe (plan) -----------------------------------------------
+    if not items.all(run_id, "dedupe"):
+        removals, zero_byte, _scanned = dedupe.plan_removals(
+            ctx.drive, ctx.conn, root.id
+        )
+        for removal in removals:
+            items.put(run_id, "dedupe", removal.drive_id, run_id, "pending",
+                      removal.__dict__)
+        for drive_id in zero_byte:
+            items.put(run_id, "dedupe", drive_id, run_id, "skipped",
+                      {"why": "zero-byte file, shares an MD5 with nothing"})
+        yield ProgressEvent(
+            f"{len(removals)} duplicate copy/copies to trash; "
+            f"{len(zero_byte)} zero-byte file(s) left alone.",
+            progress=_progress("dedupe", 0, 1), phase=_label("dedupe"),
+        )
+
+    doomed = {row["item_key"] for row in items.pending(run_id, "dedupe")}
+
+    # ---- Repack (plan) -----------------------------------------------
+    if not items.all(run_id, "repack"):
+        moves = repack.plan_moves(ctx.drive, ctx.conn, root.id, exclude=doomed)
+        for move in moves:
+            items.put(run_id, "repack", move.drive_id, run_id, "pending",
+                      move.__dict__)
+        yield ProgressEvent(
+            f"{len(moves)} file(s) to move into their bucket folder.",
+            progress=_progress("repack", 0, 1), phase=_label("repack"),
+        )
+
+    if not params.confirm:
+        yield ProgressEvent(
+            "Nothing has changed in Drive. Re-run with confirm to apply this "
+            "plan.",
+            progress=1.0,
+        )
+        return
+
+    if ctx.writer is None:
+        yield ProgressEvent(
+            "This context cannot write to Drive.", progress=1.0, level="error"
+        )
+        return
+
+    # ---- Dedupe (apply) ----------------------------------------------
+    outstanding = items.pending(run_id, "dedupe")
+    for index, row in enumerate(outstanding, start=1):
+        if _cancelled(ctx):
+            return
+        removal = dedupe.Removal(**row["detail"])
+        try:
+            dedupe.apply_removal(ctx.writer, removal, ctx.conn)
+        except DriveError as exc:
+            items.mark(run_id, "dedupe", row["item_key"], "failed",
+                       {"error": str(exc)})
+            yield ProgressEvent(f"{removal.name}: {exc}",
+                                progress=_progress("dedupe", index,
+                                                   len(outstanding)),
+                                phase=_label("dedupe"), level="error",
+                                done=index, total=len(outstanding))
+            continue
+        items.mark(run_id, "dedupe", row["item_key"], "done")
+        yield ProgressEvent(
+            f"Trashed {removal.parent_path}/{removal.name}",
+            progress=_progress("dedupe", index, len(outstanding)),
+            phase=_label("dedupe"), done=index, total=len(outstanding),
+        )
+
+    # ---- Repack (apply) ----------------------------------------------
+    outstanding = items.pending(run_id, "repack")
+    # Every folder that already exists under the root, plus whichever bucket
+    # folders this plan's moves need and do not find. `ensure_folders` alone
+    # only knows the destinations; a move's *source* folder is just as often
+    # one nobody is arriving at this run, and apply_move needs both ids.
+    folder_ids = repack.folder_paths(ctx.drive, root.id)
+    folder_ids.update(repack.ensure_folders(
+        ctx.writer, root.id,
+        sorted({row["detail"]["to_folder"] for row in outstanding}),
+    ))
+    for index, row in enumerate(outstanding, start=1):
+        if _cancelled(ctx):
+            return
+        move = repack.Move(**row["detail"])
+        try:
+            repack.apply_move(ctx.writer, ctx.conn, move, folder_ids)
+        except DriveError as exc:
+            items.mark(run_id, "repack", row["item_key"], "failed",
+                       {"error": str(exc)})
+            yield ProgressEvent(f"{move.name}: {exc}",
+                                progress=_progress("repack", index,
+                                                   len(outstanding)),
+                                phase=_label("repack"), level="error",
+                                done=index, total=len(outstanding))
+            continue
+        items.mark(run_id, "repack", row["item_key"], "done")
+        yield ProgressEvent(
+            f"{move.from_path} → {move.to_folder}/{move.new_name}",
+            progress=_progress("repack", index, len(outstanding)),
+            phase=_label("repack"), done=index, total=len(outstanding),
+        )
+
+    # ---- Sweep -------------------------------------------------------
+    empty = repack.plan_sweep(ctx.drive, root.id)
+    for index, (folder_id, name) in enumerate(empty, start=1):
+        if _cancelled(ctx):
+            return
+        repack.apply_sweep(ctx.writer, folder_id)
+        items.put(run_id, "sweep", folder_id, run_id, "done", {"name": name})
+        yield ProgressEvent(
+            f"Trashed the now-empty folder {name}.",
+            progress=_progress("sweep", index, len(empty)),
+            phase=_label("sweep"), done=index, total=len(empty),
+        )
+
+    yield ProgressEvent(
+        f"Done. {len(items.all(run_id, 'dedupe', 'done'))} duplicate(s) "
+        f"trashed, {len(items.all(run_id, 'repack', 'done'))} file(s) moved, "
+        f"{len(empty)} folder(s) swept.",
+        progress=1.0,
+    )

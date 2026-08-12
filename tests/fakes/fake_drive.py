@@ -36,6 +36,7 @@ class FakeDrive:
         self._ids = itertools.count(1)
         self.range_calls: list[tuple[str, int, int]] = []
         self.trashed: list[str] = []
+        self.moves: list[tuple[str, str]] = []
         self.corrupt_next_upload = False
         self.fail_chunks = 0
         self.sessions_started = 0
@@ -60,15 +61,19 @@ class FakeDrive:
         mime_type: str = "application/octet-stream",
         modified_time: str | None = None,
         image_time: str | None = None,
+        app_properties: dict[str, str] | None = None,
     ) -> DriveFile:
         file = DriveFile(
             id=id, name=name, mimeType=mime_type, size=len(content),
             md5Checksum=hashlib.md5(content).hexdigest(), parents=[parent],
             modifiedTime=modified_time,
             imageMediaMetadata={"time": image_time} if image_time else None,
+            appProperties=app_properties,
         )
         self._files[id] = file
         self._content[id] = content
+        if app_properties:
+            self._properties[id] = dict(app_properties)
         return file
 
     def properties_of(self, file_id: str) -> dict:
@@ -172,6 +177,7 @@ class FakeDrive:
         if name is not None:
             updates["name"] = name
         self._files[file_id] = file.model_copy(update=updates)
+        self.moves.append((file_id, add_parent))
         if properties:
             self.update_properties(file_id, properties)
 
