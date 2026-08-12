@@ -40,8 +40,8 @@ Open http://localhost:5173. Vite proxies `/api` to the backend.
 ## The two flows
 
 Most runs need only two actions, both under **Flows** in the sidebar. Each
-reports a full plan and changes nothing in Drive until you re-run it with
-`confirm`.
+reports a full plan and changes nothing in Drive until you confirm through the
+button on the run page.
 
 ### Sync from Archives
 
@@ -56,9 +56,12 @@ Four read-only phases build a plan; a fifth, gated by `confirm`, uploads it.
 
 After Plan it reports how many files are pending, already in the Global
 folder, or in error, and stops — nothing has been uploaded yet. Open
-**Review Plan** to see every file and where it would go, then re-run **Sync
-from Archives** with `confirm` for the fifth phase, **Upload**, the only one
-that writes to Drive.
+**Review Plan** to see every file and where it would go, then click the
+**Confirm this plan** button on the run page. The button includes the run id
+shown in the progress display, so confirming acts on exactly the plan you read.
+If you need to confirm an older run, enter its run id in the form and set
+`confirm` to execute the fifth phase, **Upload**, the only one that writes to
+Drive.
 
 Files whose bytes are already in the Global folder are **not** uploaded
 again. A file is skipped only on content evidence — an MD5 this app recorded,
@@ -78,9 +81,11 @@ Five phases behind one confirm gate: Index, Enrich, Dedupe, Repack, Sweep.
 - **Sweep** trashes folders left empty once Dedupe and Repack have run.
 
 Without `confirm` it reports the Dedupe and Repack plans and changes
-nothing. With `confirm` it applies both plans, in that order — a file about
-to be trashed must never reserve space in a bucket — then sweeps. Repack
-moves are metadata-only: no bytes are re-downloaded or re-uploaded.
+nothing. Click the **Confirm this plan** button on the run page to apply both
+plans, in that order — a file about to be trashed must never reserve space in a
+bucket — then sweeps. The button includes the run id shown in the progress
+display, so confirming acts on exactly the plan you read. Repack moves are
+metadata-only: no bytes are re-downloaded or re-uploaded.
 
 Organised photos live in whole-month bucket folders under `Photos/`, packed
 greedily to roughly 100 files each: a busy month gets its own folder
