@@ -161,6 +161,39 @@ def test_run_id_reaches_the_action(runner, conn, monkeypatch):
     assert seen["cancellable"] is True
 
 
+def test_submit_honours_a_run_id_declared_in_params(runner, conn):
+    """A flow confirming the plan it just reported passes run_id in its own
+    params, not as an explicit submit() argument — the route never threads
+    one through. The job must continue that run, not mint a fresh one."""
+    job = runner.submit("sync_archives", {"confirm": True, "run_id": "abc"})
+    runner.wait_idle()
+    assert job.run_id == "abc"
+    assert JobsRepo(conn).get(job.id).run_id == "abc"
+
+
+def test_an_explicit_run_id_argument_wins_over_params(runner, conn):
+    """`/jobs/{id}/resume` passes both; its explicit value is authoritative."""
+    job = runner.submit(
+        "sync_archives", {"confirm": True, "run_id": "from-params"},
+        run_id="from-argument",
+    )
+    runner.wait_idle()
+    assert job.run_id == "from-argument"
+
+
+def test_an_action_without_run_id_in_params_still_gets_one_generated(
+    runner, conn
+):
+    """Regression guard: every existing action (no `run_id` field in its
+    Params) must keep getting a fresh run_id, not None or a KeyError."""
+    job = runner.submit("check_connection", {})
+    runner.wait_idle()
+    assert job.run_id
+    other = runner.submit("check_connection", {})
+    runner.wait_idle()
+    assert other.run_id != job.run_id
+
+
 def test_cancelling_a_running_job_stops_it_and_keeps_checkpoints(
     runner, conn, monkeypatch
 ):

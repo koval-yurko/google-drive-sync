@@ -50,7 +50,12 @@ class JobRunner:
         resumed_from: str | None = None,
     ) -> Job:
         registry.get_action(action_id)  # fail fast on unknown ids
-        job = self._repo.create(action_id, params, run_id, resumed_from)
+        # An action that declares `run_id` in its Params is asking to continue
+        # an existing run — a flow confirming the plan it just reported. An
+        # explicit argument (from resume) still wins.
+        job = self._repo.create(
+            action_id, params, run_id or params.get("run_id"), resumed_from
+        )
         with self._outstanding_lock:
             self._outstanding += 1
             self._idle.clear()
