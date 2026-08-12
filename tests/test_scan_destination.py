@@ -15,7 +15,9 @@ def _tree() -> FakeDrive:
 
 def test_walks_every_depth_and_records_paths(conn):
     drive = _tree()
-    assert index_destination(drive, conn, "root") == 2
+    walked = index_destination(drive, conn, "root")
+    assert len(walked) == 2
+    assert {f.id for f in walked} == {"f1", "f2"}
     rows = {
         r["drive_id"]: r["parent_path"]
         for r in conn.execute("SELECT drive_id, parent_path FROM drive_files")
@@ -54,7 +56,7 @@ def test_a_file_gone_from_drive_is_dropped_on_the_next_walk(conn):
     smaller.add_folder("m1", "2025-01", parent="root")
     smaller.add_file("f1", "a.heic", b"aaa", parent="m1", mime_type="image/heic")
 
-    assert index_destination(smaller, conn, "root") == 1
+    assert len(index_destination(smaller, conn, "root")) == 1
     remaining = [
         r["drive_id"] for r in conn.execute("SELECT drive_id FROM drive_files")
     ]

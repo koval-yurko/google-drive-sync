@@ -96,13 +96,14 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     # carry its timestamp, so a half-finished index would delete what it had
     # not yet reached. Re-walking is cheap and idempotent.
     try:
-        count = scan.index_destination(ctx.drive, ctx.conn, root.id)
+        walked = scan.index_destination(ctx.drive, ctx.conn, root.id)
     except DriveError as exc:
         yield ProgressEvent(
             f"Cannot read the Global Photos folder: {exc}",
             progress=1.0, level="error",
         )
         return
+    count = len(walked)
     items.put(run_id, "index", root.id, run_id, "done", {"files": count})
     yield ProgressEvent(
         f"Indexed {count} file(s) under {root.name}.",
@@ -113,6 +114,14 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         return
 
     # ---- Enrich ------------------------------------------------------
+    # `walked` already carries the appProperties and EXIF location Enrich
+    # needs, straight from the walk moments ago — reusing it here is the
+    # whole point of I8(a): no second get_file per file. The `.get_file`
+    # fallback below is only for a row `unenriched()` finds that this walk
+    # did not produce (e.g. another writer inserted it between Index
+    # committing and this loop reading `drive_files`); it keeps the same
+    # per-item isolation the old always-fetch code had for that edge.
+    walked_by_id = {file.id: file for file in walked}
     pending = scans.unenriched()
     geocoder = places.Geocoder(
         ctx.conn, places.api_key_from_env(ctx.config.repo_root)
@@ -122,7 +131,9 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         if _cancelled(ctx):
             return
         try:
-            file = ctx.drive.get_file(row["drive_id"])
+            file = walked_by_id.get(row["drive_id"])
+            if file is None:
+                file = ctx.drive.get_file(row["drive_id"])
             result = enrich.enrichment_for(file, geocoder)
             scans.set_enrichment(
                 row["drive_id"],

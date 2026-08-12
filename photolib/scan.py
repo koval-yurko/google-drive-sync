@@ -15,10 +15,19 @@ re-walk costs seconds; the caller checkpoints it as a single unit.
 from __future__ import annotations
 
 from photolib.db.scan_repo import ScanRepo
+from photolib.drive.client import DriveFile
 
 
-def index_destination(drive, conn, folder_id: str) -> int:
-    """Walk `folder_id` at any depth, upsert every file, return the count."""
+def index_destination(drive, conn, folder_id: str) -> list[DriveFile]:
+    """Walk `folder_id` at any depth, upsert every file, return what was seen.
+
+    The caller gets back the full `DriveFile` for each file walked —
+    `appProperties`, EXIF location, all of it — because a fresh Enrich phase
+    in the same run needs exactly that and should not pay for a second
+    `get_file` per file to get it again. `len(...)` is the count the walk
+    used to return.
+    """
+    files: list[DriveFile] = []
     rows: list[dict] = []
     stack: list[tuple[str, str]] = [(folder_id, "")]
     seen: set[str] = set()
@@ -35,6 +44,7 @@ def index_destination(drive, conn, folder_id: str) -> int:
                     (child.id, f"{path}/{child.name}" if path else child.name)
                 )
                 continue
+            files.append(child)
             rows.append(
                 {
                     "drive_id": child.id, "name": child.name,
@@ -45,4 +55,4 @@ def index_destination(drive, conn, folder_id: str) -> int:
             )
 
     ScanRepo(conn).upsert_drive_files(rows)
-    return len(rows)
+    return files

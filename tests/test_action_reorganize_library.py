@@ -267,15 +267,38 @@ def test_a_stale_source_folder_does_not_abort_the_confirmed_run(conn, tmp_path):
 
 
 def test_enrich_isolates_a_drive_error_and_the_flow_keeps_going(
-    reorg_context, conn, drive
+    reorg_context, conn, drive, monkeypatch
 ):
-    """I1: one file trashed between Index and Enrich (a plain 404 from
-    `ctx.drive.get_file`) must not fail the whole flow before Dedupe,
-    Repack and Sweep run."""
+    """I1 + I8(a): Enrich now works from the `DriveFile`s the Index walk
+    already holds, so a file trashed between Index and Enrich no longer
+    needs a second Drive call and no longer fails this way. The remaining
+    `get_file` fallback covers the rarer race it was actually guarding
+    against: a row `unenriched()` finds that this run's own walk did not
+    produce — e.g. another writer's `record_drive_file` landing between
+    Index committing and this loop reading `drive_files`. Simulate that
+    race directly, and confirm the per-item isolation still holds for it."""
+    from photolib import scan as scan_module
+
+    real_index_destination = scan_module.index_destination
+
+    def index_then_inject(drv, cn, folder_id):
+        walked = real_index_destination(drv, cn, folder_id)
+        cn.execute(
+            "INSERT INTO drive_files (drive_id, name, parent_path, indexed_at) "
+            "VALUES ('ghost', 'ghost.jpg', 'f-a', 'now')"
+        )
+        cn.commit()
+        return walked
+
+    monkeypatch.setattr(
+        "photolib.actions.reorganize_library.scan.index_destination",
+        index_then_inject,
+    )
+
     real_get_file = drive.get_file
 
     def flaky(file_id):
-        if file_id == "d-dup1":
+        if file_id == "ghost":
             raise NotFoundError(f"no such file: {file_id}")
         return real_get_file(file_id)
 
@@ -286,11 +309,35 @@ def test_enrich_isolates_a_drive_error_and_the_flow_keeps_going(
     ))
 
     error_events = [e for e in events if e.level == "error"]
-    assert any("d-dup1" in e.message for e in error_events)
+    assert any("ghost" in e.message for e in error_events)
     assert any(e.phase and e.phase.startswith("Dedupe") for e in events)
     assert any(e.phase and e.phase.startswith("Repack") for e in events)
     failed = JobItemsRepo(conn).all(reorg_context.run_id, "enrich", "failed")
-    assert any(r["item_key"] == "d-dup1" for r in failed)
+    assert any(r["item_key"] == "ghost" for r in failed)
+
+
+def test_enrich_uses_the_walked_files_and_makes_no_get_file_calls(
+    reorg_context, conn, drive
+):
+    """I8(a): the whole point of carrying `DriveFile`s from Index to Enrich
+    is that Enrich must not re-fetch data the walk already holds. Every
+    pending file in this fixture's tree was just walked by Index, so a
+    `get_file` that raises must never actually be called."""
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("Enrich must not call get_file for a walked file")
+
+    drive.get_file = _boom
+
+    events = list(reorganize_library.run(
+        reorg_context, reorganize_library.Params()
+    ))
+
+    assert not any(e.level == "error" for e in events)
+    # The t_family property on d-with-props was still read and imported,
+    # proving enrichment actually ran off the walked snapshot.
+    slugs = {r["slug"] for r in conn.execute("SELECT slug FROM tags")}
+    assert "family" in slugs
 
 
 def test_enrich_isolates_a_duplicate_tag_error_and_the_flow_keeps_going(

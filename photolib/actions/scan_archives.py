@@ -30,7 +30,7 @@ class Params(ActionParams):
 
 def _index_destination(ctx: ActionContext, folder_id: str) -> int:
     """Walk the destination at any depth and return how many files were seen."""
-    return index_destination(ctx.drive, ctx.conn, folder_id)
+    return len(index_destination(ctx.drive, ctx.conn, folder_id))
 
 
 def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
