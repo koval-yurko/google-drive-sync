@@ -46,6 +46,7 @@ _UPLOAD_SELECT = """
     JOIN entries e ON e.id = m.entry_id
     JOIN archives a ON a.id = e.archive_id
     LEFT JOIN drive_files df ON df.drive_id = m.plan_match
+                            AND df.trashed_at IS NULL
 """
 
 

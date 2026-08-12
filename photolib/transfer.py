@@ -216,6 +216,11 @@ def transfer_entry(
         spool_entry(read_range, entry, spooled)
         local_md5 = file_md5(spooled)
 
+        # Both must be present: a NULL `skip_if_md5` (e.g. because the
+        # planned adopt target has since been trashed in Drive — see
+        # media_repo.py's `trashed_at IS NULL` join guard) must fall
+        # through to a normal upload rather than adopting on `adopt_id`
+        # alone. This one-sided fallback is load-bearing, not a gap.
         if skip_if_md5 is not None and adopt_id is not None:
             if local_md5 == skip_if_md5:
                 # The bytes are already in Drive under `adopt_id`. Downloading

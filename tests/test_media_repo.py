@@ -159,6 +159,27 @@ def test_verify_rows_are_offered_with_the_match_md5(conn, seeded_entry):
     assert row["match_md5"] == "abc123"
 
 
+def test_a_trashed_adopt_target_yields_no_match_md5(conn, seeded_entry):
+    """I4: `pending_uploads` must not hand Organize an adopt target Dedupe
+    has since trashed — Organize adopts on MD5 alone, so a live `match_md5`
+    is what makes adoption safe. Without the `trashed_at IS NULL` guard on
+    the join, a trashed file's row still joins in its (now-stale) MD5 and
+    the row is marked done against bytes sitting in Drive's trash."""
+    conn.execute(
+        "INSERT INTO drive_files (drive_id, name, parent_path, md5, size, "
+        "trashed_at) VALUES ('drive-9', 'a.heic', '2025-01', 'abc123', 3, "
+        "'2026-08-12T00:00:00+00:00')"
+    )
+    conn.commit()
+    repo = MediaRepo(conn)
+    repo.set_plan(seeded_entry, target_folder="2025-01",
+                  target_name="a~0000ff.heic", plan_verdict="verify",
+                  plan_match="drive-9")
+    row = repo.pending_uploads()[0]
+    assert row["plan_verdict"] == "verify"
+    assert row["match_md5"] is None
+
+
 def test_summary_separates_skipped_from_pending(conn, seeded_entry):
     repo = MediaRepo(conn)
     repo.set_plan(seeded_entry, target_folder="2025-01", target_name="a.heic",
