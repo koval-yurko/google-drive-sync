@@ -5,7 +5,7 @@ import threading
 
 import pytest
 
-from photolib.actions import organize
+from photolib.actions import organize, verify_library
 from photolib.actions.base import ActionContext
 from photolib.actions.organize import Params, run
 from photolib.actions.pair_metadata import Params as PairParams
@@ -363,3 +363,47 @@ def test_verify_row_matching_drive_is_marked_done_against_that_file(
     assert after["upload_status"] == "done"
     assert after["drive_file_id"] == "drive-twin"
     assert ctx.drive.sessions_started == 0
+
+
+def test_an_adopted_file_is_recorded_where_it_really_lives(ctx, archive_content):
+    """Finding I5: an adopted file is never moved — it stays in whatever
+    foreign folder it was already in, since Plan's bucket was only ever
+    applied on paper. The catalog must be corrected to match, or Verify
+    Library reports the app's own adoption as drift (the failure this test
+    guards; see the final assertion).
+    """
+    repo = MediaRepo(ctx.conn)
+    rows = repo.all_media()
+    row, others = rows[0], rows[1:]
+    for other in others:
+        repo.set_plan(other["entry_id"], plan_verdict="skip", plan_match=None)
+
+    content = archive_content[row["name"]]
+    twin_md5 = hashlib.md5(content).hexdigest()
+    # The adopt target lives in a folder Plan never chose for this file —
+    # that is exactly why it was a name/size "verify" match rather than a
+    # sure thing.
+    ctx.drive.add_folder("foreign", "Somewhere Else", parent="photos")
+    ctx.drive.add_file("drive-twin", row["name"], content, parent="foreign")
+    ctx.conn.execute(
+        "INSERT INTO drive_files "
+        "(drive_id, name, parent_path, md5, size, mime_type) "
+        "VALUES ('drive-twin', ?, 'Somewhere Else', ?, ?, 'image/heic')",
+        (row["name"], twin_md5, row["entry_size"]),
+    )
+    ctx.conn.commit()
+    repo.set_plan(row["entry_id"], plan_verdict="verify", plan_match="drive-twin")
+
+    list(run(ctx, Params()))
+
+    after = next(r for r in repo.all_media() if r["entry_id"] == row["entry_id"])
+    assert after["target_folder"] == "Somewhere Else"
+    assert after["target_name"] == row["name"]
+
+    # The assertion that matters: a read-only drift scan of live Drive must
+    # not call this adoption "moved outside the app".
+    warnings = [
+        e.message for e in verify_library.run(ctx, verify_library.Params())
+        if e.level == "warn"
+    ]
+    assert not any("moved" in m for m in warnings)

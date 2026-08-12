@@ -254,15 +254,27 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
                         cancelled = True
                         break
                     continue
-                repo.mark_uploaded(
-                    row["entry_id"], result.drive_file_id, result.md5
-                )
                 if result.adopted:
+                    # The adopted file stays wherever it already lived in
+                    # Drive — Plan's bucket was never applied to it — so the
+                    # catalog's target_folder/target_name must be corrected
+                    # to match reality in the same write. Otherwise Verify
+                    # Library sees a live parent path that disagrees with
+                    # the planned one and reports it as drift the app itself
+                    # created (finding I5).
+                    repo.mark_uploaded(
+                        row["entry_id"], result.drive_file_id, result.md5,
+                        target_folder=row["match_parent_path"],
+                        target_name=row["match_name"],
+                    )
                     message = (
                         f"{row['name']}: already in Drive, verified by MD5 — "
                         "not uploaded."
                     )
                 else:
+                    repo.mark_uploaded(
+                        row["entry_id"], result.drive_file_id, result.md5
+                    )
                     # The Library browses drive_files; record the arrival so it
                     # is visible without waiting for the next Scan.
                     scans.record_drive_file(

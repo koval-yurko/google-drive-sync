@@ -41,7 +41,8 @@ _UPLOAD_SELECT = """
            e.path, e.name, e.crc32, e.size, e.compressed_size,
            e.method, e.local_header_offset,
            a.drive_id AS archive_drive_id, a.name AS archive_name,
-           df.md5 AS match_md5
+           df.md5 AS match_md5, df.parent_path AS match_parent_path,
+           df.name AS match_name
     FROM media m
     JOIN entries e ON e.id = m.entry_id
     JOIN archives a ON a.id = e.archive_id
@@ -182,12 +183,39 @@ class MediaRepo:
         )
         self._conn.commit()
 
-    def mark_uploaded(self, entry_id: int, drive_file_id: str, md5: str) -> None:
+    def mark_uploaded(
+        self,
+        entry_id: int,
+        drive_file_id: str,
+        md5: str,
+        target_folder: str | None = None,
+        target_name: str | None = None,
+    ) -> None:
+        """Record a finished transfer.
+
+        `target_folder`/`target_name` are for the adopt path only: an adopted
+        file is left wherever it already lived in Drive, not moved to the
+        bucket Plan computed, so the catalog must be corrected to match reality
+        in the same write — otherwise Verify Library reports the app's own
+        adoption as drift. A plain upload lands exactly where Plan said, so
+        those columns are left untouched for it.
+        """
+        assignments = [
+            "upload_status = 'done'", "drive_file_id = ?", "md5 = ?",
+            "error = NULL", "upload_session_uri = NULL",
+            "session_started_at = NULL", "upload_offset = 0",
+        ]
+        params: list = [drive_file_id, md5]
+        if target_folder is not None:
+            assignments.append("target_folder = ?")
+            params.append(target_folder)
+        if target_name is not None:
+            assignments.append("target_name = ?")
+            params.append(target_name)
+        params.append(entry_id)
         self._conn.execute(
-            "UPDATE media SET upload_status = 'done', drive_file_id = ?, md5 = ?, "
-            "error = NULL, upload_session_uri = NULL, session_started_at = NULL, "
-            "upload_offset = 0 WHERE entry_id = ?",
-            (drive_file_id, md5, entry_id),
+            f"UPDATE media SET {', '.join(assignments)} WHERE entry_id = ?",
+            params,
         )
         self._conn.commit()
 
