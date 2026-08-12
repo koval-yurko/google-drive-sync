@@ -2,10 +2,9 @@ import threading
 
 import pytest
 
-from photolib.actions import sync_archives
-from photolib.actions.base import ActionContext
+from photolib.actions import check_connection, scan_archives, sync_archives
+from photolib.actions.base import ActionContext, ProgressEvent
 from photolib.config import Config
-from photolib.db import catalog
 from photolib.db.job_items_repo import JobItemsRepo
 from photolib.db.settings_repo import PHOTOS_ROOT, ZIP_SOURCE, FolderRef, SettingsRepo
 from tests.fakes.fake_drive import FakeDrive
@@ -105,7 +104,50 @@ def test_a_fatal_phase_error_ends_the_flow(sync_context_without_folders):
     assert not any(e.phase and e.phase.startswith("Pair") for e in events)
 
 
-def test_cancellation_between_phases_stops_the_flow(sync_context):
+def test_cancellation_before_the_first_phase_stops_the_flow(sync_context):
+    """Cancelling before `run()` is even called stops it before Connect."""
     sync_context.cancelled.set()
     events = list(sync_archives.run(sync_context, sync_archives.Params()))
+    assert not any(e.phase and e.phase.startswith("Connect") for e in events)
     assert not any(e.phase and e.phase.startswith("Plan") for e in events)
+
+
+def test_cancellation_between_phases_stops_the_flow(sync_context, monkeypatch):
+    """Cancelling while Connect runs is only honored once Connect finishes —
+    cancellation lands on phase boundaries, not inside a running phase."""
+    original = check_connection.run
+
+    def cancel_once_connect_finishes(ctx, params):
+        yield from original(ctx, params)
+        ctx.cancelled.set()
+
+    monkeypatch.setattr(check_connection, "run", cancel_once_connect_finishes)
+    events = list(sync_archives.run(sync_context, sync_archives.Params()))
+    assert any(e.phase and e.phase.startswith("Connect") for e in events)
+    assert not any(e.phase and e.phase.startswith("Scan") for e in events)
+
+
+def test_a_per_item_error_mid_phase_does_not_halt_the_flow(sync_context, monkeypatch):
+    """A phase that reports an error for one item but finishes cleanly (e.g.
+    one corrupt archive among many) is not a fatal failure — only the
+    phase's *last* event decides that, so the flow proceeds past it."""
+    real_scan = scan_archives.run
+
+    def flaky_scan(ctx, params):
+        events = list(real_scan(ctx, params))
+        # A per-item failure in the middle, shaped like scan_archives.py's
+        # own handling of one unreadable archive among many: an error event
+        # followed by more progress, ending on a clean final event.
+        yield from events[:-1]
+        yield ProgressEvent(
+            "corrupt-part.zip: cannot read index — bad CRC",
+            progress=0.9, level="error",
+        )
+        yield events[-1]
+
+    monkeypatch.setattr(scan_archives, "run", flaky_scan)
+    events = list(sync_archives.run(sync_context, sync_archives.Params()))
+    assert any(e.level == "error" for e in events)
+    assert not any("Scan failed" in e.message for e in events)
+    assert any(e.phase and e.phase.startswith("Plan") for e in events)
+    assert "Re-run with confirm" in " ".join(e.message for e in events)

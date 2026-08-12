@@ -65,7 +65,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
             "There is no plan for this run to confirm. Run Sync from Archives "
             "without confirm first, read what it reports, then confirm that "
             "run.",
-            progress=1.0,
+            progress=0.0,
             level="error",
         )
         return
@@ -73,14 +73,21 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     for index, (name, span, module) in enumerate(_READ_ONLY, start=1):
         if _cancelled(ctx):
             return
-        failed = False
+        # Every action in this codebase yields its fatal error as the last
+        # event before it returns, at progress=1.0 — see scan_archives.py
+        # when folders are unconfigured, plan_organize.py when nothing is
+        # catalogued. An error-level event with more events after it is a
+        # per-item failure the phase already recovered from and continued
+        # past (e.g. one corrupt archive among many), so only the *last*
+        # event's level decides whether the phase failed fatally.
+        last_level = "info"
         for event in run_phase(
             name, span, module.run, ctx, module.Params(),
             index=index, total=_TOTAL_PHASES,
         ):
-            failed = failed or event.level == "error"
+            last_level = event.level
             yield event
-        if failed:
+        if last_level == "error":
             yield ProgressEvent(
                 f"{name} failed; the flow stopped there. Fix the cause and "
                 "resume this job.",
@@ -102,7 +109,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     if not params.confirm:
         yield ProgressEvent(
             "Nothing has been uploaded. Re-run with confirm to move the bytes.",
-            progress=1.0,
+            progress=0.55,
         )
         return
 
