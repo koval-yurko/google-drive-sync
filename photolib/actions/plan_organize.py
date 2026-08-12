@@ -169,7 +169,13 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         # must upload under a free name; if they agree, the name is unused.
         if verdict == "verify" or (folder, name) in taken:
             name = _disambiguate(name, row["crc32"])
-        taken.add((folder, name))
+        # Only rows whose target will actually be written may claim a slot.
+        # `set_plan` discards target_folder/target_name for a `done` row —
+        # its columns record where the file already is — so reserving one
+        # here would rename a pending file to dodge a collision that never
+        # exists.
+        if row["upload_status"] != "done":
+            taken.add((folder, name))
 
         lat = sidecar["latitude"] if sidecar else None
         lon = sidecar["longitude"] if sidecar else None

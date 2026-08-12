@@ -374,3 +374,70 @@ def test_plan_disambiguates_the_name_of_a_verify_row(conn, planned_catalog):
             if r["plan_verdict"] == "verify"]
     assert rows, "fixture must produce at least one verify row"
     assert all("~" in r["target_name"] for r in rows)
+
+
+@pytest.fixture
+def colliding_catalog(conn, tmp_path, monkeypatch):
+    """Two entries sharing a filename, so both compute the same destination.
+
+    Neither `ctx` nor `planned_catalog` can express this — their entries have
+    distinct names, so the collision path never runs. Nothing is recorded in
+    `drive_files`, which keeps both verdicts at `upload`: this isolates the
+    collision set from the `verify` disambiguation, which is a separate rule.
+    """
+    monkeypatch.setenv("PHOTOLIB_HOME", str(tmp_path))
+    monkeypatch.delenv("GOOGLE_MAPS_API_KEY", raising=False)
+    cfg = Config.load()
+    conn.execute(
+        "INSERT INTO archives (drive_id, name, size) VALUES ('z1', 'a.zip', 10)"
+    )
+    # Same name, different bytes, and paths that fix the processing order —
+    # `all_media` sorts by archive name then path, so crc 111 is planned first.
+    for path, crc in (("d/1-dup.heic", 111), ("d/2-dup.heic", 222)):
+        conn.execute(
+            "INSERT INTO entries (archive_id, path, name, crc32, size,"
+            " compressed_size, method, local_header_offset, kind) VALUES "
+            "((SELECT id FROM archives WHERE drive_id='z1'),"
+            f" '{path}', 'dup.heic', {crc}, 3, 2, 8, 0, 'media')"
+        )
+    conn.commit()
+    media_repo = MediaRepo(conn)
+    for crc in (111, 222):
+        media_repo.upsert_media(
+            conn.execute(
+                "SELECT id FROM entries WHERE crc32 = ?", (crc,)
+            ).fetchone()["id"]
+        )
+    return ActionContext(
+        conn=conn, drive=FakeDrive(), settings=SettingsRepo(conn), config=cfg
+    )
+
+
+def test_a_done_row_does_not_reserve_its_computed_name(conn, colliding_catalog):
+    """A finished file's computed destination is discarded by set_plan, so it
+    must not push a pending file into a disambiguated name."""
+    repo = MediaRepo(conn)
+    first, second = repo.all_media()
+    assert first["name"] == second["name"] == "dup.heic"
+
+    # The first entry is already uploaded; the second is still pending and
+    # shares its name, so both compute the same destination.
+    repo.mark_uploaded(first["entry_id"], "drive-done", "abc123")
+
+    list(run(colliding_catalog, Params()))
+
+    pending = [r for r in repo.all_media() if r["upload_status"] == "pending"]
+    assert len(pending) == 1, "the second entry should still be pending"
+    assert "~" not in pending[0]["target_name"], (
+        "a done row's discarded destination must not force a rename"
+    )
+
+
+def test_two_pending_rows_still_disambiguate(conn, colliding_catalog):
+    """The collision set must keep working for rows that will be written —
+    the fix narrows what reserves a slot, it does not stop reserving."""
+    list(run(colliding_catalog, Params()))
+
+    names = [r["target_name"] for r in MediaRepo(conn).all_media()]
+    assert names[0] == "dup.heic"
+    assert "~" in names[1], "the second pending row must dodge the first"
