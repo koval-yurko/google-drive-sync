@@ -15,6 +15,32 @@ V4_COLUMNS = (
     ("drive_files", "mime_type"),
     ("drive_files", "synced_tags"),
 )
+# Added by the bucket-repacking branch, which removed the Place facet.
+V5_COLUMNS = (
+    ("drive_files", "capture_hint"),
+)
+# Everything the two-flows branch added at schema version 6. Stripping these
+# is what makes the upgrade path actually run its ALTER TABLE statements —
+# without it, both sides of the parity comparison get the columns from
+# schema.sql and the test passes without proving anything.
+V6_COLUMNS = (
+    ("jobs", "run_id"),
+    ("jobs", "resumed_from"),
+    ("jobs", "phase"),
+    ("jobs", "items_done"),
+    ("jobs", "items_total"),
+    ("media", "plan_verdict"),
+    ("media", "plan_match"),
+    ("drive_files", "country"),
+    ("drive_files", "latitude"),
+    ("drive_files", "longitude"),
+    ("drive_files", "metadata_source"),
+)
+# Every column the simulated old catalog must lose.
+# `test_every_added_column_is_covered_by_the_strip_list` holds this to
+# `migrations._ADDED_COLUMNS`, so a new column cannot silently skip the
+# upgrade path again.
+STRIPPED_COLUMNS = V3_COLUMNS + V4_COLUMNS + V5_COLUMNS + V6_COLUMNS
 
 
 def _schema(conn: sqlite3.Connection) -> set[tuple[str, str]]:
@@ -68,8 +94,9 @@ def test_upgrading_a_v2_catalog_matches_a_fresh_one(tmp_path):
     conn.execute("INSERT INTO settings (key, value) VALUES ('photos_root', 'x')")
     conn.commit()
     # Strip everything added after v2 and rewind the version: a genuine v2 catalog.
-    for table, column in V3_COLUMNS + V4_COLUMNS:
+    for table, column in STRIPPED_COLUMNS:
         conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+    conn.execute("DROP TABLE job_items")
     conn.execute("DROP TABLE file_tags")
     conn.execute("DROP TABLE tags")
     conn.execute("PRAGMA user_version = 2")
@@ -82,6 +109,41 @@ def test_upgrading_a_v2_catalog_matches_a_fresh_one(tmp_path):
     assert _schema(upgraded) == _schema(fresh)
     assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 6
     assert upgraded.execute("SELECT value FROM settings").fetchone()["value"] == "x"
+
+
+def test_the_v2_simulation_really_removes_the_later_columns(tmp_path):
+    """Guards the guard.
+
+    `test_upgrading_a_v2_catalog_matches_a_fresh_one` only proves anything if
+    its simulated old catalog is genuinely missing the columns the migration
+    adds. If the stripping list ever falls behind `_ADDED_COLUMNS` again, both
+    sides get the columns from schema.sql and the comparison passes without
+    exercising a single ALTER TABLE.
+    """
+    old = tmp_path / "old.db"
+    conn = catalog.connect(old)
+    for table, column in STRIPPED_COLUMNS:
+        conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+    conn.execute("DROP TABLE job_items")
+
+    for table, column in STRIPPED_COLUMNS:
+        present = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        assert column not in present, f"{table}.{column} survived the strip"
+
+    tables = {
+        row["name"]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    assert "job_items" not in tables
+    conn.close()
+
+
+def test_every_added_column_is_covered_by_the_strip_list():
+    """A column in _ADDED_COLUMNS that no test strips is a column whose
+    ALTER TABLE path is never run."""
+    stripped = set(STRIPPED_COLUMNS)
+    declared = {(table, column) for table, column, _ in migrations._ADDED_COLUMNS}
+    assert declared - stripped == set()
 
 
 def test_upgrading_keeps_existing_tags(tmp_path):
