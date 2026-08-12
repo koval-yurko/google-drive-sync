@@ -23,6 +23,7 @@ class Removal:
     md5: str
     keeper_id: str
     keeper_path: str
+    size: int
 
 
 def _walk(drive, folder_id: str) -> list[tuple[str, object]]:
@@ -39,12 +40,13 @@ def _walk(drive, folder_id: str) -> list[tuple[str, object]]:
     return found
 
 
-def plan_removals(drive, conn, root_id: str) -> tuple[list[Removal], list[str]]:
+def plan_removals(drive, conn, root_id: str) -> tuple[list[Removal], list[str], int]:
     """Group the live files under `root_id` by MD5 and decide what to trash.
 
     Returns the removals (one entry per redundant copy, naming the keeper
-    that survives it) and the drive ids of zero-byte files that were found
-    but left alone — they share an MD5 without being real copies.
+    that survives it), the drive ids of zero-byte files that were found but
+    left alone — they share an MD5 without being real copies — and the total
+    number of live files the walk scanned.
     """
     files = _walk(drive, root_id)
 
@@ -77,15 +79,23 @@ def plan_removals(drive, conn, root_id: str) -> tuple[list[Removal], list[str]]:
                 md5=file.md5,
                 keeper_id=keeper_file.id,
                 keeper_path=keeper_path,
+                size=file.size,
             ))
 
-    return removals, empty_ids
+    return removals, empty_ids, len(files)
 
 
-def apply_removal(writer, removal: Removal, conn) -> None:
-    """Trash the redundant copy and stamp it trashed in the catalog."""
+def apply_removal(
+    writer, removal: Removal, conn, stamp: str | None = None
+) -> None:
+    """Trash the redundant copy and stamp it trashed in the catalog.
+
+    `stamp` lets a caller trashing a whole batch record one shared
+    `trashed_at` for all of them; `None` means "now".
+    """
     writer.trash(removal.drive_id)
-    stamp = datetime.now(timezone.utc).isoformat()
+    if stamp is None:
+        stamp = datetime.now(timezone.utc).isoformat()
     conn.execute(
         "UPDATE drive_files SET trashed_at = ? WHERE drive_id = ?",
         (stamp, removal.drive_id),

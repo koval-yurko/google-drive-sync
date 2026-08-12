@@ -49,7 +49,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         )
         return
 
-    rows, targets, _names = repack._targets(ctx.conn)
+    rows, targets, names = repack.targets_for(ctx.conn)
     if not rows:
         yield ProgressEvent(
             "Nothing indexed. Run Scan Archives first.", progress=1.0,
@@ -57,7 +57,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         )
         return
 
-    moves = repack.plan_moves(ctx.drive, ctx.conn, photos_root.id)
+    moves = repack.moves_from_targets(rows, targets, names)
 
     per_folder = Counter(targets[row["drive_id"]] for row in rows)
     yield ProgressEvent(
@@ -82,13 +82,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         return
 
     try:
-        folder_ids = repack._folder_paths(ctx.drive, photos_root.id)
-        for move in moves:
-            if move.from_path not in folder_ids:
-                parents = ctx.drive.get_file(move.drive_id).parents
-                folder_ids[move.from_path] = (
-                    parents[0] if parents else photos_root.id
-                )
+        folder_ids = repack.folder_paths(ctx.drive, photos_root.id)
         # ensure_folder must run sequentially: Drive would happily create the
         # same folder twice.
         target_names = sorted({move.to_folder for move in moves})
@@ -107,7 +101,16 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         if move.new_name != move.name:
             renamed += 1
         try:
-            repack.apply_move(ctx.writer, ctx.conn, move, folder_ids)
+            move_folder_ids = folder_ids
+            if move.from_path not in folder_ids:
+                # A stale or unresolved parent_path: fall back to Drive's own
+                # record of this one file's current parent, exactly as this
+                # row would resolve it — not cached for any other row, since
+                # a shared parent_path is not a guarantee of a shared parent.
+                parents = ctx.drive.get_file(move.drive_id).parents
+                old_parent = parents[0] if parents else photos_root.id
+                move_folder_ids = {**folder_ids, move.from_path: old_parent}
+            repack.apply_move(ctx.writer, ctx.conn, move, move_folder_ids)
         except DriveError as exc:
             failed += 1
             yield ProgressEvent(f"{move.name}: {exc}", level="error")

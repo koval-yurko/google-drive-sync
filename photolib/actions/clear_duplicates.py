@@ -11,6 +11,7 @@ redundant, and which copy of each group survives — is worked out.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Iterator
 
 from photolib import dedupe
@@ -53,9 +54,9 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         return
 
     try:
-        removals, zero = dedupe.plan_removals(ctx.drive, ctx.conn, photos_root.id)
-        groups = len({r.keeper_id for r in removals})
-        freed = sum((ctx.drive.get_file(r.drive_id).size or 0) for r in removals)
+        removals, zero, total = dedupe.plan_removals(
+            ctx.drive, ctx.conn, photos_root.id
+        )
     except DriveError as exc:
         yield ProgressEvent(
             f"Cannot read the Global Photos folder: {exc}",
@@ -64,8 +65,10 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         )
         return
 
+    groups = len({r.keeper_id for r in removals})
+    freed = sum(r.size for r in removals)
     yield ProgressEvent(
-        f"{len(removals)} redundant cop"
+        f"{total} file(s) scanned: {len(removals)} redundant cop"
         f"{'y' if len(removals) == 1 else 'ies'} in "
         f"{groups} group(s), "
         f"{freed / 1e9:.2f} GB recoverable.",
@@ -99,10 +102,11 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         )
         return
 
+    stamp = datetime.now(timezone.utc).isoformat()
     trashed = 0
     for index, r in enumerate(removals, start=1):
         try:
-            dedupe.apply_removal(ctx.writer, r, ctx.conn)
+            dedupe.apply_removal(ctx.writer, r, ctx.conn, stamp)
         except DriveError as exc:
             yield ProgressEvent(
                 f"{_path_of(r.name, r.parent_path)}: {exc}", level="error"

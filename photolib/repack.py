@@ -61,14 +61,17 @@ def _histogram(conn, exclude: set[str]) -> Counter[str]:
     return counts
 
 
-def _targets(conn, exclude: set[str] = frozenset()):
+def targets_for(conn, exclude: set[str] = frozenset()):
     """Every live catalogued file's bucket target, plus which names already
     sit in each target folder so an arrival can dodge them.
 
-    `plan_moves` reads this to decide what must move; the action that calls
-    it reuses the same computation (not another live Drive traversal — this
-    is one SQL query and some in-memory bucket packing) to report the full
-    picture, including files that already sit where they belong.
+    Public — not just an implementation detail of `plan_moves` — because an
+    action reporting the full picture (including files that already sit
+    where they belong, not just the ones that must move) needs the same
+    `rows`/`targets` this produces. It is one SQL query and some in-memory
+    bucket packing, not another live Drive traversal, so both `plan_moves`
+    and that caller sharing it costs nothing extra worth avoiding by
+    duplicating the bucket-diff logic instead.
     """
     rows = [
         row for row in conn.execute(FOLDER_QUERY)
@@ -87,18 +90,15 @@ def _targets(conn, exclude: set[str] = frozenset()):
     return rows, targets, names
 
 
-def plan_moves(
-    drive, conn, root_id: str, *, exclude: set[str] = frozenset()
-) -> list[Move]:
-    """Every live catalogued file whose bucket target differs from where it
-    currently sits, renamed as needed to avoid colliding with a file
-    already at that destination or with another move landing there first.
+def moves_from_targets(rows, targets, names) -> list[Move]:
+    """Build the Move list from a `targets_for` computation.
 
-    `exclude` drops files dedupe is about to trash from consideration and
-    from the space they would otherwise reserve — see `_histogram`.
+    Renames as needed to avoid colliding with a file already at the
+    destination or with another move landing there first. Split out of
+    `plan_moves` so a caller that already has a `targets_for` result (to
+    report on the full library, not just what must move) can build the
+    move list from it without re-running the query and the bucket packing.
     """
-    rows, targets, names = _targets(conn, exclude)
-
     moves: list[Move] = []
     for row in rows:
         target = targets[row["drive_id"]]
@@ -114,6 +114,20 @@ def plan_moves(
         ))
         names[target].add(name)
     return moves
+
+
+def plan_moves(
+    drive, conn, root_id: str, *, exclude: set[str] = frozenset()
+) -> list[Move]:
+    """Every live catalogued file whose bucket target differs from where it
+    currently sits, renamed as needed to avoid colliding with a file
+    already at that destination or with another move landing there first.
+
+    `exclude` drops files dedupe is about to trash from consideration and
+    from the space they would otherwise reserve — see `_histogram`.
+    """
+    rows, targets, names = targets_for(conn, exclude)
+    return moves_from_targets(rows, targets, names)
 
 
 def apply_move(writer, conn, move: Move, folder_ids: dict[str, str]) -> None:
@@ -137,7 +151,7 @@ def apply_move(writer, conn, move: Move, folder_ids: dict[str, str]) -> None:
     conn.commit()
 
 
-def _folder_paths(drive, root_id: str) -> dict[str, str]:
+def folder_paths(drive, root_id: str) -> dict[str, str]:
     """Every folder path under the root, mapped to its id. '' is the root."""
     paths = {"": root_id}
     stack: list[tuple[str, str]] = [(root_id, "")]
