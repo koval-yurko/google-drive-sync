@@ -65,6 +65,11 @@ _UPLOAD_SELECT = """
 class MediaRepo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
+        # Shared with every other repo over this connection (see
+        # catalog.LockedConnection). Individual statements serialise
+        # themselves; this is for write-then-read-back sequences and for the
+        # reads that iterate a cursor instead of materialising it.
+        self._lock = conn.lock
 
     # ---------- sidecars ----------
 
@@ -73,16 +78,20 @@ class MediaRepo:
         placeholders = ", ".join("?" for _ in _SIDECAR_FIELDS)
         updates = ", ".join(f"{f} = excluded.{f}" for f in _SIDECAR_FIELDS)
         values = [parsed.get(f) for f in _SIDECAR_FIELDS]
-        self._conn.execute(
-            f"INSERT INTO sidecars (entry_id, {columns}, raw_json) "
-            f"VALUES (?, {placeholders}, ?) "
-            f"ON CONFLICT(entry_id) DO UPDATE SET {updates}, raw_json = excluded.raw_json",
-            [entry_id, *values, raw_json],
-        )
-        self._conn.commit()
-        return self._conn.execute(
-            "SELECT id FROM sidecars WHERE entry_id = ?", (entry_id,)
-        ).fetchone()["id"]
+        # Write then read the id back: another thread's write in between can
+        # only be a different entry_id, but the pair is cheap to hold.
+        with self._lock:
+            self._conn.execute(
+                f"INSERT INTO sidecars (entry_id, {columns}, raw_json) "
+                f"VALUES (?, {placeholders}, ?) "
+                f"ON CONFLICT(entry_id) DO UPDATE SET {updates}, "
+                f"raw_json = excluded.raw_json",
+                [entry_id, *values, raw_json],
+            )
+            self._conn.commit()
+            return self._conn.execute(
+                "SELECT id FROM sidecars WHERE entry_id = ?", (entry_id,)
+            ).fetchone()["id"]
 
     def unpaired_sidecars(self) -> list[sqlite3.Row]:
         return list(
@@ -98,18 +107,22 @@ class MediaRepo:
     # ---------- media ----------
 
     def upsert_media(self, entry_id: int, **fields) -> int:
-        self._conn.execute(
-            "INSERT INTO media (entry_id) VALUES (?) "
-            "ON CONFLICT(entry_id) DO NOTHING",
-            (entry_id,),
-        )
-        self._conn.commit()
-        media_id = self._conn.execute(
-            "SELECT id FROM media WHERE entry_id = ?", (entry_id,)
-        ).fetchone()["id"]
-        if fields:
-            self.set_plan(entry_id, **fields)
-        return media_id
+        # Insert-then-read-back, optionally followed by the plan write: one
+        # logical "this entry is now catalogued with this plan". The lock is
+        # reentrant, so `set_plan` may take it too.
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO media (entry_id) VALUES (?) "
+                "ON CONFLICT(entry_id) DO NOTHING",
+                (entry_id,),
+            )
+            self._conn.commit()
+            media_id = self._conn.execute(
+                "SELECT id FROM media WHERE entry_id = ?", (entry_id,)
+            ).fetchone()["id"]
+            if fields:
+                self.set_plan(entry_id, **fields)
+            return media_id
 
     def link_sidecar(self, entry_id: int, sidecar_id: int) -> None:
         self._conn.execute(
@@ -171,24 +184,37 @@ class MediaRepo:
         def one(sql: str) -> int:
             return self._conn.execute(sql).fetchone()[0]
 
-        media = one("SELECT COUNT(*) FROM media")
-        planned = one("SELECT COUNT(*) FROM media WHERE target_folder IS NOT NULL")
-        return {
-            "media": media,
-            "planned": planned,
-            "unplanned": media - planned,
-            "duplicates": one("SELECT COUNT(*) FROM media WHERE duplicate_of IS NOT NULL"),
-            "with_sidecar": one("SELECT COUNT(*) FROM media WHERE sidecar_id IS NOT NULL"),
-            "pending": one(
-                "SELECT COUNT(*) FROM media WHERE upload_status = 'pending' "
-                "AND COALESCE(plan_verdict, 'upload') != 'skip'"
-            ),
-            "skipped": one(
-                "SELECT COUNT(*) FROM media WHERE plan_verdict = 'skip'"
-            ),
-            "uploaded": one("SELECT COUNT(*) FROM media WHERE upload_status = 'done'"),
-            "errors": one("SELECT COUNT(*) FROM media WHERE upload_status = 'error'"),
-        }
+        # Nine counts that are read together and displayed together; taken
+        # against one state of the catalog so they cannot contradict.
+        with self._lock:
+            media = one("SELECT COUNT(*) FROM media")
+            planned = one(
+                "SELECT COUNT(*) FROM media WHERE target_folder IS NOT NULL"
+            )
+            return {
+                "media": media,
+                "planned": planned,
+                "unplanned": media - planned,
+                "duplicates": one(
+                    "SELECT COUNT(*) FROM media WHERE duplicate_of IS NOT NULL"
+                ),
+                "with_sidecar": one(
+                    "SELECT COUNT(*) FROM media WHERE sidecar_id IS NOT NULL"
+                ),
+                "pending": one(
+                    "SELECT COUNT(*) FROM media WHERE upload_status = 'pending' "
+                    "AND COALESCE(plan_verdict, 'upload') != 'skip'"
+                ),
+                "skipped": one(
+                    "SELECT COUNT(*) FROM media WHERE plan_verdict = 'skip'"
+                ),
+                "uploaded": one(
+                    "SELECT COUNT(*) FROM media WHERE upload_status = 'done'"
+                ),
+                "errors": one(
+                    "SELECT COUNT(*) FROM media WHERE upload_status = 'error'"
+                ),
+            }
 
     # ---------- uploads ----------
 
@@ -280,11 +306,12 @@ class MediaRepo:
         Only rows Drive confirmed: `done`, with a file id and an MD5. This is
         the evidence Clear Stale Trees gates on.
         """
-        rows = self._conn.execute(
-            f"{_UPLOAD_SELECT} WHERE m.upload_status = 'done' "
-            "AND m.drive_file_id IS NOT NULL AND m.md5 IS NOT NULL"
-        )
-        return {row["name"]: row for row in rows}
+        with self._lock:
+            rows = self._conn.execute(
+                f"{_UPLOAD_SELECT} WHERE m.upload_status = 'done' "
+                "AND m.drive_file_id IS NOT NULL AND m.md5 IS NOT NULL"
+            )
+            return {row["name"]: row for row in rows}
 
     def verified_by_crc(self) -> dict[tuple[int, int], sqlite3.Row]:
         """Verified uploads keyed by (crc32, uncompressed size).
@@ -293,8 +320,9 @@ class MediaRepo:
         which only knows MD5: these are bytes this app itself uploaded and
         Drive confirmed, so their identity is settled without a download.
         """
-        rows = self._conn.execute(
-            f"{_UPLOAD_SELECT} WHERE m.upload_status = 'done' "
-            "AND m.drive_file_id IS NOT NULL AND m.md5 IS NOT NULL"
-        )
-        return {(row["crc32"], row["size"]): row for row in rows}
+        with self._lock:
+            rows = self._conn.execute(
+                f"{_UPLOAD_SELECT} WHERE m.upload_status = 'done' "
+                "AND m.drive_file_id IS NOT NULL AND m.md5 IS NOT NULL"
+            )
+            return {(row["crc32"], row["size"]): row for row in rows}

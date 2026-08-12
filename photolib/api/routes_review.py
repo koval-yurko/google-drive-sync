@@ -10,6 +10,9 @@ from photolib.db.scan_repo import ScanRepo
 router = APIRouter(tags=["review"])
 
 ROW_FIELDS = (
+    # The Review page's Retry button posts this back to
+    # /review/retry/{entry_id}; without it the request reads `undefined`.
+    "entry_id",
     "name", "path", "archive_name", "target_folder", "target_name",
     "capture_time", "capture_source", "country",
     "duplicate_of", "duplicate_reason", "upload_status",

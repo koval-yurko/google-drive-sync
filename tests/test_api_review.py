@@ -97,3 +97,16 @@ def test_retry_puts_a_failed_file_back_in_the_queue(client):
 
 def test_retrying_an_unknown_entry_is_a_404(client):
     assert client.post("/api/review/retry/999").status_code == 404
+
+
+def test_media_rows_carry_the_entry_id_the_retry_route_needs(client):
+    """The Review page's Retry button posts row.entry_id to
+    /api/review/retry/{entry_id}. Without the field it posts `undefined`."""
+    rows = client.get("/api/review/media").json()["rows"]
+    assert rows, "fixture must produce at least one media row"
+    assert all(isinstance(row["entry_id"], int) for row in rows)
+
+
+def test_retry_accepts_an_id_taken_from_a_media_row(client):
+    row = client.get("/api/review/media").json()["rows"][0]
+    assert client.post(f"/api/review/retry/{row['entry_id']}").status_code == 200

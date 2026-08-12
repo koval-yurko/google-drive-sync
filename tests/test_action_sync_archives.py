@@ -89,6 +89,19 @@ def test_confirmed_run_after_a_plan_reaches_the_upload_phase(
     assert any(e.phase and e.phase.startswith("Upload") for e in events)
 
 
+def test_the_upload_phase_reports_item_counts(sync_context):
+    """The counts must survive run_phase's rescaling into the flow."""
+    list(sync_archives.run(sync_context, sync_archives.Params()))
+    events = list(sync_archives.run(
+        sync_context, sync_archives.Params(confirm=True)
+    ))
+    counted = [
+        e for e in events
+        if e.phase and e.phase.startswith("Upload") and e.total is not None
+    ]
+    assert counted, "the Upload phase reported no item counts"
+
+
 def test_progress_is_monotonic_and_bounded(sync_context):
     events = list(sync_archives.run(sync_context, sync_archives.Params()))
     values = [e.progress for e in events if e.progress is not None]
