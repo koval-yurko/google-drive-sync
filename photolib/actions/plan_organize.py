@@ -60,6 +60,28 @@ def _disambiguate(name: str, crc: int) -> str:
     return f"{root}~{crc & 0xFFFFFF:06x}{ext}"
 
 
+def verdict_for(row, verified_by_crc, live_ids, by_name):
+    """What Sync should do with this entry: skip, verify at transfer, upload.
+
+    `skip` is certainty bought for nothing: this app uploaded these exact
+    bytes and Drive confirmed them, and the file is still there. `verify`
+    means a live file of the same name and size exists but its MD5 cannot be
+    compared to a ZIP's CRC32 without the bytes, so the decision is deferred
+    to the moment the bytes are in hand anyway.
+    """
+    hit = verified_by_crc.get((row["crc32"], row["entry_size"]))
+    if hit is not None and hit["drive_file_id"] in live_ids:
+        return "skip", hit["drive_file_id"]
+
+    for candidate in by_name.get(row["name"], []):
+        if candidate["drive_id"] not in live_ids:
+            continue
+        if candidate["size"] == row["entry_size"]:
+            return "verify", candidate["drive_id"]
+
+    return "upload", None
+
+
 def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     media_repo = MediaRepo(ctx.conn)
     scan_repo = ScanRepo(ctx.conn)
@@ -77,6 +99,8 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     rows = media_repo.all_media()
 
     existing = scan_repo.drive_file_names()
+    verified_by_crc = media_repo.verified_by_crc()
+    live_ids = scan_repo.live_drive_ids()
     geocoder = places.Geocoder(
         ctx.conn, places.api_key_from_env(ctx.config.repo_root)
     )
@@ -120,6 +144,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
 
     taken: set[tuple[str, str]] = set()
     duplicates = located = unknown_dates = 0
+    skipped = to_verify = 0
 
     for index, (row, sidecar, capture, source) in enumerate(resolved, start=1):
         if index % 100 == 0 or index == total:
@@ -130,10 +155,19 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         if source == "unknown":
             unknown_dates += 1
 
+        verdict, match = verdict_for(row, verified_by_crc, live_ids, existing)
+        if verdict == "skip":
+            skipped += 1
+        elif verdict == "verify":
+            to_verify += 1
+
         month = buckets.month_of(capture)
         folder = fmap[month] if month else buckets.UNKNOWN_FOLDER
         name = row["name"]
-        if (folder, name) in taken:
+        # A `verify` row's destination name is already occupied by the file it
+        # matched. If the MD5s disagree at transfer time this uploads, so it
+        # must upload under a free name; if they agree, the name is unused.
+        if verdict == "verify" or (folder, name) in taken:
             name = _disambiguate(name, row["crc32"])
         taken.add((folder, name))
 
@@ -169,9 +203,15 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
             target_name=name,
             duplicate_of=duplicate_of,
             duplicate_reason=duplicate_reason,
+            plan_verdict=verdict,
+            plan_match=match,
         )
 
     detail = f"Planned {total} file(s)."
+    if skipped:
+        detail += f" {skipped} already in the destination (nothing to upload)."
+    if to_verify:
+        detail += f" {to_verify} will be checked against an existing file."
     if duplicates:
         detail += f" {duplicates} already exist in the destination (will still upload)."
     if unknown_dates:

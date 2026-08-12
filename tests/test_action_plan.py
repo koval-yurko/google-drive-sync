@@ -58,6 +58,46 @@ def by_name(ctx) -> dict:
     return {row["name"]: row for row in MediaRepo(ctx.conn).all_media()}
 
 
+@pytest.fixture
+def planned_catalog(conn, tmp_path, monkeypatch):
+    """One archive, two entries; a live Drive file matches the first by name+size."""
+    monkeypatch.setenv("PHOTOLIB_HOME", str(tmp_path))
+    monkeypatch.delenv("GOOGLE_MAPS_API_KEY", raising=False)
+    cfg = Config.load()
+    conn.execute(
+        "INSERT INTO archives (drive_id, name, size) VALUES ('z1', 'a.zip', 10)"
+    )
+    conn.execute(
+        "INSERT INTO entries (archive_id, path, name, crc32, size, compressed_size,"
+        " method, local_header_offset, kind) VALUES "
+        "((SELECT id FROM archives WHERE drive_id='z1'),"
+        " 'd/a.heic', 'a.heic', 111, 3, 2, 8, 0, 'media')"
+    )
+    conn.execute(
+        "INSERT INTO entries (archive_id, path, name, crc32, size, compressed_size,"
+        " method, local_header_offset, kind) VALUES "
+        "((SELECT id FROM archives WHERE drive_id='z1'),"
+        " 'd/b.heic', 'b.heic', 222, 3, 2, 8, 0, 'media')"
+    )
+    conn.commit()
+    media_repo = MediaRepo(conn)
+    media_repo.upsert_media(
+        conn.execute("SELECT id FROM entries WHERE crc32 = 111").fetchone()["id"]
+    )
+    media_repo.upsert_media(
+        conn.execute("SELECT id FROM entries WHERE crc32 = 222").fetchone()["id"]
+    )
+    ScanRepo(conn).record_drive_file(
+        drive_id="d2", name="a.heic", parent_path="somewhere",
+        md5="deadbeef", size=3, mime_type="image/heic",
+    )
+    context = ActionContext(
+        conn=conn, drive=FakeDrive(), settings=SettingsRepo(conn), config=cfg
+    )
+    list(run(context, Params()))
+    return context
+
+
 def test_resolve_capture_prefers_the_sidecar():
     when, source = resolve_capture(
         {"path": "Takeout/Google Photos/Photos from 2019/x.HEIC"},
@@ -210,3 +250,50 @@ def test_name_collisions_within_a_month_are_disambiguated(ctx):
     ]
     assert len(targets) == 2
     assert len(set(targets)) == 2, "colliding targets must be disambiguated"
+
+
+from photolib.actions.plan_organize import verdict_for
+
+
+class _Row(dict):
+    """sqlite3.Row is read-only; a dict subscripts the same way."""
+
+
+def test_verdict_skips_bytes_this_app_already_uploaded():
+    row = _Row(crc32=111, entry_size=3, name="a.heic")
+    verified = {(111, 3): _Row(drive_file_id="d1")}
+    assert verdict_for(row, verified, {"d1"}, {}) == ("skip", "d1")
+
+
+def test_verdict_does_not_skip_when_the_uploaded_copy_is_gone():
+    row = _Row(crc32=111, entry_size=3, name="a.heic")
+    verified = {(111, 3): _Row(drive_file_id="d1")}
+    assert verdict_for(row, verified, set(), {}) == ("upload", None)
+
+
+def test_verdict_defers_to_transfer_on_a_name_and_size_match():
+    row = _Row(crc32=111, entry_size=3, name="a.heic")
+    by_name = {"a.heic": [_Row(drive_id="d2", size=3)]}
+    assert verdict_for(row, {}, {"d2"}, by_name) == ("verify", "d2")
+
+
+def test_verdict_uploads_when_the_name_matches_but_the_size_differs():
+    row = _Row(crc32=111, entry_size=3, name="a.heic")
+    by_name = {"a.heic": [_Row(drive_id="d2", size=9)]}
+    assert verdict_for(row, {}, {"d2"}, by_name) == ("upload", None)
+
+
+def test_verdict_ignores_a_trashed_name_match():
+    row = _Row(crc32=111, entry_size=3, name="a.heic")
+    by_name = {"a.heic": [_Row(drive_id="d2", size=3)]}
+    assert verdict_for(row, {}, set(), by_name) == ("upload", None)
+
+
+def test_plan_disambiguates_the_name_of_a_verify_row(conn, planned_catalog):
+    """A verify row's upload, if it happens, cannot reuse the taken name."""
+    from photolib.db.media_repo import MediaRepo
+
+    rows = [r for r in MediaRepo(conn).all_media()
+            if r["plan_verdict"] == "verify"]
+    assert rows, "fixture must produce at least one verify row"
+    assert all("~" in r["target_name"] for r in rows)

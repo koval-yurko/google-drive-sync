@@ -21,6 +21,7 @@ def _now() -> str:
 class ScanRepo:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
+        self._lock = conn.lock
 
     # ---------- archives ----------
 
@@ -165,6 +166,16 @@ class ScanRepo:
         ):
             grouped[row["name"]].append(row)
         return grouped
+
+    def live_drive_ids(self) -> set[str]:
+        """Drive ids the last scan saw untrashed."""
+        with self._lock:
+            return {
+                row["drive_id"]
+                for row in self._conn.execute(
+                    "SELECT drive_id FROM drive_files WHERE trashed_at IS NULL"
+                )
+            }
 
     # ---------- reporting ----------
 
