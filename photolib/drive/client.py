@@ -66,7 +66,11 @@ class DriveFile(BaseModel):
                 )
             except ValueError:
                 pass
-        for stamp in (self.modified_time, self.created_time):
+        # createdTime first: modifiedTime is a metadata-mutation timestamp,
+        # and Repack issues a files.update on every move, so a legacy file's
+        # bucket month could otherwise end up being its last-repack month
+        # rather than anything about when it was actually captured.
+        for stamp in (self.created_time, self.modified_time):
             if not stamp:
                 continue
             try:
