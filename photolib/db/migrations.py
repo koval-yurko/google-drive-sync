@@ -27,6 +27,11 @@ _ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("drive_files", "mime_type", "mime_type TEXT"),
     ("drive_files", "synced_tags", "synced_tags TEXT"),
     ("drive_files", "capture_hint", "capture_hint INTEGER"),
+    ("jobs", "run_id", "run_id TEXT"),
+    ("jobs", "resumed_from", "resumed_from TEXT"),
+    ("jobs", "phase", "phase TEXT"),
+    ("jobs", "items_done", "items_done INTEGER NOT NULL DEFAULT 0"),
+    ("jobs", "items_total", "items_total INTEGER NOT NULL DEFAULT 0"),
 )
 
 # (table, column) pairs retired from the schema. SQLite 3.35+ supports

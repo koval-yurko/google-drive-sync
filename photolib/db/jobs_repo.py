@@ -26,6 +26,11 @@ class Job(BaseModel):
     created_at: str
     started_at: str | None = None
     finished_at: str | None = None
+    run_id: str | None = None
+    resumed_from: str | None = None
+    phase: str | None = None
+    items_done: int = 0
+    items_total: int = 0
 
 
 class JobEvent(BaseModel):
@@ -53,13 +58,24 @@ class JobsRepo:
         # never execute concurrently with a write on the shared connection.
         self._lock = conn.lock
 
-    def create(self, action: str, params: dict) -> Job:
+    def create(
+        self,
+        action: str,
+        params: dict,
+        run_id: str | None = None,
+        resumed_from: str | None = None,
+    ) -> Job:
         with self._lock:
             job_id = uuid.uuid4().hex
             self._conn.execute(
-                "INSERT INTO jobs (id, action, params, status, progress, created_at) "
-                "VALUES (?, ?, ?, 'queued', 0.0, ?)",
-                (job_id, action, json.dumps(params), _now()),
+                "INSERT INTO jobs "
+                "(id, action, params, status, progress, created_at, "
+                " run_id, resumed_from) "
+                "VALUES (?, ?, ?, 'queued', 0.0, ?, ?, ?)",
+                (
+                    job_id, action, json.dumps(params), _now(),
+                    run_id or uuid.uuid4().hex, resumed_from,
+                ),
             )
             self._conn.commit()
             job = self.get(job_id)
@@ -107,14 +123,32 @@ class JobsRepo:
             )
             self._conn.commit()
 
+    def mark_cancelled(self, job_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE jobs SET status = 'cancelled', finished_at = ? "
+                "WHERE id = ?",
+                (_now(), job_id),
+            )
+            self._conn.commit()
+
     def update_progress(
-        self, job_id: str, progress: float, message: str | None = None
+        self,
+        job_id: str,
+        progress: float,
+        message: str | None = None,
+        phase: str | None = None,
+        done: int | None = None,
+        total: int | None = None,
     ) -> None:
         with self._lock:
             self._conn.execute(
-                "UPDATE jobs SET progress = ?, message = COALESCE(?, message) "
+                "UPDATE jobs SET progress = ?, "
+                "message = COALESCE(?, message), phase = COALESCE(?, phase), "
+                "items_done = COALESCE(?, items_done), "
+                "items_total = COALESCE(?, items_total) "
                 "WHERE id = ?",
-                (progress, message, job_id),
+                (progress, message, phase, done, total, job_id),
             )
             self._conn.commit()
 

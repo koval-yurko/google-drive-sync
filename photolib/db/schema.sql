@@ -39,7 +39,12 @@ CREATE TABLE IF NOT EXISTS jobs (
     error        TEXT,
     created_at   TEXT NOT NULL,
     started_at   TEXT,
-    finished_at  TEXT
+    finished_at  TEXT,
+    run_id       TEXT,
+    resumed_from TEXT,
+    phase        TEXT,
+    items_done   INTEGER NOT NULL DEFAULT 0,
+    items_total  INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);

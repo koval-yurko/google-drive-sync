@@ -200,3 +200,50 @@ def test_concurrent_cross_repo_access_is_safe(conn):
     t2.join()
 
     assert not errors, f"Concurrency errors: {errors}"
+
+
+def test_create_generates_a_run_id(conn):
+    repo = JobsRepo(conn)
+    job = repo.create("check_connection", {})
+    assert job.run_id
+    assert repo.create("check_connection", {}).run_id != job.run_id
+
+
+def test_create_accepts_an_explicit_run_id(conn):
+    repo = JobsRepo(conn)
+    first = repo.create("check_connection", {})
+    second = repo.create("check_connection", {}, run_id=first.run_id,
+                         resumed_from=first.id)
+    assert second.run_id == first.run_id
+    assert second.resumed_from == first.id
+
+
+def test_mark_cancelled(conn):
+    repo = JobsRepo(conn)
+    job = repo.create("check_connection", {})
+    repo.mark_cancelled(job.id)
+    reloaded = repo.get(job.id)
+    assert reloaded.status == "cancelled"
+    assert reloaded.finished_at
+
+
+def test_update_progress_records_phase_and_counts(conn):
+    repo = JobsRepo(conn)
+    job = repo.create("check_connection", {})
+    repo.update_progress(job.id, 0.5, "half", phase="Upload (5/5)",
+                         done=12, total=40)
+    reloaded = repo.get(job.id)
+    assert (reloaded.phase, reloaded.items_done, reloaded.items_total) == (
+        "Upload (5/5)", 12, 40
+    )
+
+
+def test_update_progress_leaves_phase_alone_when_not_supplied(conn):
+    repo = JobsRepo(conn)
+    job = repo.create("check_connection", {})
+    repo.update_progress(job.id, 0.5, "half", phase="Scan (2/5)", done=3, total=9)
+    repo.update_progress(job.id, 0.6, "more")
+    reloaded = repo.get(job.id)
+    assert (reloaded.phase, reloaded.items_done, reloaded.items_total) == (
+        "Scan (2/5)", 3, 9
+    )
