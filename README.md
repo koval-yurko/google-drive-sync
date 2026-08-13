@@ -110,7 +110,6 @@ through.
 | Plan Organization | Resolves dates, countries, duplicate verdicts, destinations | No |
 | Organize Photos | Uploads every planned file into its destination bucket folder | Yes |
 | Repack Buckets | Moves every indexed file into its bucket folder, trashing what's left empty | Yes |
-| Clear Stale Trees | Moves a redundant extracted tree to Drive's trash | Yes |
 | Clear Duplicates | Trashes byte-identical copies inside the Global Photos folder, keeping one | Yes |
 | Sync Tags to Drive | Mirrors tags onto each file's `appProperties` | Yes |
 | Verify Library | Compares the catalog against what Drive actually holds and reports drift | No |
@@ -189,15 +188,6 @@ are cleared automatically.
 
 `downloads/` is gitignored, and nothing is kept there after a successful
 upload.
-
-## Clearing the stale trees
-
-`Clear Stale Trees` takes the Drive folder id of one extracted tree and reports
-what it would trash without changing anything. A file is eligible only when a
-file of the same name has already been uploaded **and** verified against Drive's
-own MD5. Re-run with `confirm` to act. It moves files to Drive's trash, where
-they stay recoverable; nothing is permanently deleted and the source archives
-are never touched.
 
 ## Browsing and tagging
 

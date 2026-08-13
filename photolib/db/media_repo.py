@@ -300,19 +300,6 @@ class MediaRepo:
         )
         self._conn.commit()
 
-    def uploaded_by_name(self) -> dict[str, sqlite3.Row]:
-        """Verified uploads keyed by original filename.
-
-        Only rows Drive confirmed: `done`, with a file id and an MD5. This is
-        the evidence Clear Stale Trees gates on.
-        """
-        with self._lock:
-            rows = self._conn.execute(
-                f"{_UPLOAD_SELECT} WHERE m.upload_status = 'done' "
-                "AND m.drive_file_id IS NOT NULL AND m.md5 IS NOT NULL"
-            )
-            return {row["name"]: row for row in rows}
-
     def verified_by_crc(self) -> dict[tuple[int, int], sqlite3.Row]:
         """Verified uploads keyed by (crc32, uncompressed size).
 

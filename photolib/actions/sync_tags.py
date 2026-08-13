@@ -5,8 +5,8 @@ calls. Drive is the durable copy: one property per tag (`t_family` = `1`), so
 tags survive the loss of this machine, travel with the file, and stay
 queryable by anything built later.
 
-Shaped like `clear_stale_trees`, and for the same reason: it reports what it
-would change and does nothing until you confirm.
+Confirm-gated: it reports what it would change and does nothing until you
+confirm.
 
 The candidate set is every live file that has tags now, or had them last time
 this ran. Without the second half, untagging a file would drop it out of the

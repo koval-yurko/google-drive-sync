@@ -90,9 +90,3 @@ def test_reset_upload_clears_everything_about_the_attempt(repo):
 
 def test_limit_caps_the_batch(repo):
     assert len(repo.pending_uploads(limit=1)) == 1
-
-
-def test_uploaded_by_name_only_counts_verified_uploads(repo):
-    repo.mark_uploaded(1, drive_file_id="f1", md5="abc")
-    repo.mark_failed(2, "nope")
-    assert set(repo.uploaded_by_name()) == {"IMG_1.HEIC"}
