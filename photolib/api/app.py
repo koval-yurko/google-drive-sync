@@ -12,13 +12,13 @@ from photolib.config import Config
 from photolib.db import catalog
 from photolib.db.jobs_repo import JobsRepo
 from photolib.db.settings_repo import SettingsRepo
-from photolib.downloads import InflightRegistry
+from photolib.execution.downloads import InflightRegistry
 from photolib.drive.auth import TokenProvider
 from photolib.drive.client import DriveClient
 from photolib.drive.writer import DriveWriter
 from photolib.jobs.broker import EventBroker
 from photolib.jobs.runner import JobRunner
-from photolib.thumbs import ThumbnailCache
+from photolib.drive.thumbs import ThumbnailCache
 
 
 def create_app(config: Config | None = None, drive=None) -> FastAPI:

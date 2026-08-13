@@ -19,8 +19,8 @@ from photolib.config import Config
 from photolib.db import catalog
 from photolib.db.media_repo import MediaRepo
 from photolib.db.settings_repo import PHOTOS_ROOT, ZIP_SOURCE, FolderRef, SettingsRepo
-from photolib.downloads import InflightRegistry, observe
-from photolib.transfer import TransferError
+from photolib.execution.downloads import InflightRegistry, observe
+from photolib.execution.transfer import TransferError
 from tests.fakes.fake_drive import FakeDrive
 from tests.fixtures.zipbuilder import build_zip
 
@@ -156,7 +156,7 @@ def test_a_missing_writer_is_refused(ctx):
 
 
 def test_a_failed_file_is_recorded_and_the_others_still_run(ctx, monkeypatch):
-    from photolib import transfer
+    from photolib.execution import transfer
 
     real = transfer.transfer_entry
 

@@ -14,14 +14,17 @@ from __future__ import annotations
 
 from typing import Iterator
 
-from photolib import dedupe, enrich, places, repack, scan
+from photolib import ingest, places
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.actions.phases import phase_label
+from photolib.db.geocache_repo import GeocacheRepo
 from photolib.db.job_items_repo import JobItemsRepo
 from photolib.db.scan_repo import ScanRepo
 from photolib.db.settings_repo import PHOTOS_ROOT
 from photolib.db.tags_repo import DuplicateTagError, TagsRepo
 from photolib.drive.errors import DriveError
+from photolib.execution import moves, trash
+from photolib.planning import duplicates, enrich, layout
 
 ID = "reorganize_library"
 TITLE = "Reorganize Folders"
@@ -96,7 +99,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     # carry its timestamp, so a half-finished index would delete what it had
     # not yet reached. Re-walking is cheap and idempotent.
     try:
-        walked = scan.index_destination(ctx.drive, ctx.conn, root.id)
+        walked = ingest.index_destination(ctx.drive, ctx.conn, root.id)
     except DriveError as exc:
         yield ProgressEvent(
             f"Cannot read the Global Photos folder: {exc}",
@@ -124,7 +127,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     walked_by_id = {file.id: file for file in walked}
     pending = scans.unenriched()
     geocoder = places.Geocoder(
-        ctx.conn, places.api_key_from_env(ctx.config.repo_root)
+        GeocacheRepo(ctx.conn), places.api_key_from_env(ctx.config.repo_root)
     )
     total = len(pending)
     for index, row in enumerate(pending, start=1):
@@ -183,7 +186,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
 
     # ---- Dedupe (plan) -----------------------------------------------
     if not items.all(run_id, "dedupe"):
-        removals, zero_byte, _scanned = dedupe.plan_removals(
+        removals, zero_byte, _scanned = duplicates.plan_removals(
             ctx.drive, ctx.conn, root.id
         )
         for removal in removals:
@@ -202,12 +205,12 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
 
     # ---- Repack (plan) -----------------------------------------------
     if not items.all(run_id, "repack"):
-        moves = repack.plan_moves(ctx.drive, ctx.conn, root.id, exclude=doomed)
-        for move in moves:
+        planned = layout.plan_moves(ctx.conn, exclude=doomed)
+        for move in planned:
             items.put(run_id, "repack", move.drive_id, run_id, "pending",
                       move.__dict__)
         yield ProgressEvent(
-            f"{len(moves)} file(s) to move into their bucket folder.",
+            f"{len(planned)} file(s) to move into their bucket folder.",
             progress=_progress("repack", 0, 1), phase=_label("repack"),
         )
 
@@ -235,9 +238,9 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         # previously-failed row's detail carries both; strip it back out
         # before rebuilding the dataclass the plan actually describes.
         plan = {k: v for k, v in row["detail"].items() if k != "error"}
-        removal = dedupe.Removal(**plan)
+        removal = duplicates.Removal(**plan)
         try:
-            dedupe.apply_removal(ctx.writer, removal, ctx.conn)
+            trash.apply_removal(ctx.writer, removal, ctx.conn)
         except DriveError as exc:
             items.mark(run_id, "dedupe", row["item_key"], "failed",
                        {"error": str(exc)})
@@ -263,8 +266,8 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     # only knows the destinations; a move's *source* folder is just as often
     # one nobody is arriving at this run, and apply_move needs both ids.
     try:
-        folder_ids = repack.folder_paths(ctx.drive, root.id)
-        folder_ids.update(repack.ensure_folders(
+        folder_ids = layout.folder_paths(ctx.drive, root.id)
+        folder_ids.update(moves.ensure_folders(
             ctx.writer, root.id,
             sorted({row["detail"]["to_folder"] for row in outstanding}),
         ))
@@ -282,7 +285,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         # "error" folded onto its plan (job_items_repo.mark), which is not
         # a Move field.
         plan = {k: v for k, v in row["detail"].items() if k != "error"}
-        move = repack.Move(**plan)
+        move = layout.Move(**plan)
         try:
             move_folder_ids = folder_ids
             if move.from_path not in folder_ids:
@@ -295,7 +298,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
                 parents = ctx.drive.get_file(move.drive_id).parents
                 old_parent = parents[0] if parents else root.id
                 move_folder_ids = {**folder_ids, move.from_path: old_parent}
-            repack.apply_move(
+            moves.apply_move(
                 ctx.writer, ctx.conn, move, move_folder_ids, drive=ctx.drive
             )
         except (DriveError, KeyError) as exc:
@@ -321,12 +324,12 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         )
 
     # ---- Sweep -------------------------------------------------------
-    empty = repack.plan_sweep(ctx.drive, root.id)
+    empty = layout.plan_sweep(ctx.drive, root.id)
     for index, (folder_id, name) in enumerate(empty, start=1):
         if _cancelled(ctx):
             return
         try:
-            repack.apply_sweep(ctx.writer, folder_id)
+            moves.apply_sweep(ctx.writer, folder_id)
         except DriveError as exc:
             # One folder Drive won't trash — already gone, permissions,
             # whatever — must not abort the run after Dedupe and Repack

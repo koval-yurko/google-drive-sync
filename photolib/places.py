@@ -8,11 +8,11 @@ than failing the surrounding work.
 
 from __future__ import annotations
 
-import json
-import sqlite3
 from pathlib import Path
 
 import httpx
+
+from photolib.db.geocache_repo import MISSING, GeocacheRepo
 
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 ENV_VAR = "GOOGLE_MAPS_API_KEY"
@@ -46,8 +46,10 @@ def api_key_from_env(repo_root: Path | None = None) -> str | None:
 
 
 class Geocoder:
-    def __init__(self, conn: sqlite3.Connection, api_key: str | None, http=None) -> None:
-        self._conn = conn
+    def __init__(
+        self, cache: GeocacheRepo, api_key: str | None, http=None
+    ) -> None:
+        self._cache = cache
         self._api_key = api_key
         self._http = http or httpx.Client(timeout=15.0)
 
@@ -58,11 +60,9 @@ class Geocoder:
     def lookup(self, lat: float, lon: float) -> str | None:
         """The country at these coordinates, or None."""
         key = cache_key(lat, lon)
-        cached = self._conn.execute(
-            "SELECT country FROM geocache WHERE key = ?", (key,)
-        ).fetchone()
-        if cached is not None:
-            return cached["country"]
+        cached = self._cache.get(key)
+        if cached is not MISSING:
+            return cached
 
         if not self._api_key:
             return None
@@ -79,7 +79,7 @@ class Geocoder:
             return None
 
         country = self._extract(payload)
-        self._store(key, country, payload)
+        self._cache.put(key, country, payload)
         return country
 
     @staticmethod
@@ -89,12 +89,3 @@ class Geocoder:
                 if "country" in component.get("types", []):
                     return component.get("long_name")
         return None
-
-    def _store(self, key: str, country: str | None, payload: dict) -> None:
-        self._conn.execute(
-            "INSERT INTO geocache (key, country, raw_json) VALUES (?, ?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET country = excluded.country, "
-            "raw_json = excluded.raw_json",
-            (key, country, json.dumps(payload)),
-        )
-        self._conn.commit()

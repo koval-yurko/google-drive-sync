@@ -5,13 +5,26 @@ from __future__ import annotations
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timezone
-
-from photolib.ziparchive.reader import ZipEntry
+from typing import Protocol
 
 _ENTRY_COLUMNS = (
     "archive_id, path, name, crc32, size, compressed_size, "
     "method, local_header_offset, kind"
 )
+
+
+class ArchiveEntry(Protocol):
+    """The shape `replace_entries` stores. `ziparchive.reader.ZipEntry`
+    satisfies it; naming the shape rather than the class keeps the
+    persistence layer from depending on the ZIP parser."""
+
+    path: str
+    name: str
+    crc32: int
+    size: int
+    compressed_size: int
+    method: int
+    local_header_offset: int
 
 
 def _now() -> str:
@@ -64,7 +77,7 @@ class ScanRepo:
     # ---------- entries ----------
 
     def replace_entries(
-        self, archive_id: int, entries: list[ZipEntry], kinds: dict[str, str]
+        self, archive_id: int, entries: list[ArchiveEntry], kinds: dict[str, str]
     ) -> None:
         # Delete-then-insert: a reader between the two sees an archive with no
         # entries at all, so the pair is held under the connection lock.
@@ -206,7 +219,7 @@ class ScanRepo:
 
         `synced_tags` is the comma-joined, sorted slug list Enrich just
         imported from the file's `t_*` appProperties — the same format
-        `sync_tags` writes at `sync_tags.py:162`. Leaving it `None` (the
+        `TagsRepo.mark_synced` writes. Leaving it `None` (the
         default) leaves the column untouched, for callers that have no tag
         information to report; passing `""` explicitly records "Drive held
         no tags", which is different from "we never looked".
@@ -231,6 +244,24 @@ class ScanRepo:
                     "WHERE trashed_at IS NULL AND metadata_source IS NULL"
                 )
             )
+
+    def mark_trashed(self, drive_id: str, when: str) -> None:
+        """Stamp a file as trashed. Safe to replay: an overwrite of a field
+        with a value it may already hold."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE drive_files SET trashed_at = ? WHERE drive_id = ?",
+                (when, drive_id),
+            )
+            self._conn.commit()
+
+    def archive_modified_time(self, drive_id: str) -> str | None:
+        """The archive's Drive mtime, or None if no such archive is indexed."""
+        row = self._conn.execute(
+            "SELECT modified_time FROM archives WHERE drive_id = ?",
+            (drive_id,),
+        ).fetchone()
+        return row["modified_time"] if row is not None else None
 
     # ---------- reporting ----------
 

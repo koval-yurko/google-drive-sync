@@ -14,7 +14,7 @@ import hashlib
 
 import pytest
 
-from photolib import transfer
+from photolib.execution import transfer
 from photolib.actions.base import ActionContext
 from photolib.actions.steps.pair_metadata import Params as PairParams
 from photolib.actions.steps.pair_metadata import run as pair

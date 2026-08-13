@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from photolib import archives
+from photolib.ziparchive import source as archives
 from photolib.config import Config
 from photolib.drive.auth import TokenProvider
 from photolib.drive.client import DriveClient

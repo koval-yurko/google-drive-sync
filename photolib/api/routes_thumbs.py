@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from photolib.drive.errors import NotFoundError
-from photolib.thumbs import ThumbnailUnavailable
+from photolib.drive.thumbs import ThumbnailUnavailable
 
 router = APIRouter(tags=["thumbs"])
 

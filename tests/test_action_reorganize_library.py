@@ -306,7 +306,7 @@ def test_enrich_isolates_a_drive_error_and_the_flow_keeps_going(
     produce — e.g. another writer's `record_drive_file` landing between
     Index committing and this loop reading `drive_files`. Simulate that
     race directly, and confirm the per-item isolation still holds for it."""
-    from photolib import scan as scan_module
+    from photolib import ingest as scan_module
 
     real_index_destination = scan_module.index_destination
 
@@ -320,7 +320,7 @@ def test_enrich_isolates_a_drive_error_and_the_flow_keeps_going(
         return walked
 
     monkeypatch.setattr(
-        "photolib.actions.reorganize_library.scan.index_destination",
+        "photolib.actions.reorganize_library.ingest.index_destination",
         index_then_inject,
     )
 

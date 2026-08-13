@@ -1,4 +1,4 @@
-from photolib.scan import index_destination
+from photolib.ingest import index_destination
 from tests.fakes.fake_drive import FakeDrive
 
 

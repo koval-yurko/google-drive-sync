@@ -44,20 +44,6 @@ class Params(ActionParams):
     """0 means every candidate."""
 
 
-def _candidates(conn, limit: int) -> list:
-    """Files with tags now, or tags written last time. Trashed ones excluded."""
-    sql = (
-        "SELECT drive_id, name, synced_tags FROM drive_files "
-        "WHERE trashed_at IS NULL AND ("
-        "  drive_id IN (SELECT drive_id FROM file_tags) "
-        "  OR (synced_tags IS NOT NULL AND synced_tags != '')"
-        ") ORDER BY parent_path, name"
-    )
-    if limit > 0:
-        return list(conn.execute(f"{sql} LIMIT ?", (limit,)))
-    return list(conn.execute(sql))
-
-
 def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     if ctx.writer is None:
         yield ProgressEvent(
@@ -65,8 +51,9 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         )
         return
 
-    desired_by_file = TagsRepo(ctx.conn).slugs_by_file()
-    rows = _candidates(ctx.conn, params.limit)
+    tags = TagsRepo(ctx.conn)
+    desired_by_file = tags.slugs_by_file()
+    rows = tags.pending_sync(params.limit)
     if not rows:
         yield ProgressEvent(
             "No tagged files to sync. Tag something on the Library page first.",
@@ -158,11 +145,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
             yield ProgressEvent(f"{name}: {exc}", level="error")
             continue
 
-        ctx.conn.execute(
-            "UPDATE drive_files SET synced_tags = ? WHERE drive_id = ?",
-            (",".join(sorted(desired)), drive_id),
-        )
-        ctx.conn.commit()
+        tags.mark_synced(drive_id, desired)
         changed += 1
         if index % 20 == 0:
             yield ProgressEvent(

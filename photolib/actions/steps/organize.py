@@ -24,9 +24,13 @@ from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.db.media_repo import MediaRepo
 from photolib.db.settings_repo import PHOTOS_ROOT
 from photolib.db.scan_repo import ScanRepo
-from photolib.downloads import InflightRegistry, run_folder_name, sweep_empty
+from photolib.execution.downloads import (
+    InflightRegistry,
+    run_folder_name,
+    sweep_empty,
+)
 from photolib.drive.errors import DriveError
-from photolib.transfer import TransferError, mime_for, transfer_entry
+from photolib.execution.transfer import TransferError, mime_for, transfer_entry
 from photolib.ziparchive.reader import ZipEntry
 
 ID = "organize"

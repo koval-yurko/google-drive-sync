@@ -1,6 +1,6 @@
 import pytest
 
-from photolib import archives
+from photolib.ziparchive import source as archives
 from photolib.drive.errors import DriveError, NotFoundError
 from tests.fakes.fake_drive import FakeDrive
 from tests.fixtures.zipbuilder import build_zip

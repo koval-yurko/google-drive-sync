@@ -10,10 +10,11 @@ from __future__ import annotations
 import json
 from typing import Iterator
 
-from photolib import archives, takeout
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.db.media_repo import MediaRepo
 from photolib.db.scan_repo import ScanRepo
+from photolib.planning import takeout
+from photolib.ziparchive import source as archives
 from photolib.ziparchive.reader import CorruptEntryError, ZipEntry
 
 ID = "pair_metadata"

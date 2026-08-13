@@ -14,10 +14,13 @@ import os
 from datetime import datetime, timezone
 from typing import Iterator
 
-from photolib import buckets, places, takeout
+from photolib import places
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
+from photolib.db.geocache_repo import GeocacheRepo
+from photolib.db.layout_repo import LayoutRepo
 from photolib.db.media_repo import MediaRepo
 from photolib.db.scan_repo import ScanRepo
+from photolib.planning import buckets, takeout
 
 ID = "plan_organize"
 TITLE = "Plan Organization"
@@ -102,7 +105,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     verified_by_crc = media_repo.verified_by_crc()
     live_ids = scan_repo.live_drive_ids()
     geocoder = places.Geocoder(
-        ctx.conn, places.api_key_from_env(ctx.config.repo_root)
+        GeocacheRepo(ctx.conn), places.api_key_from_env(ctx.config.repo_root)
     )
     if not geocoder.enabled:
         yield ProgressEvent(
@@ -122,19 +125,16 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
 
         sidecar = None
         if row["sidecar_id"]:
-            sidecar = ctx.conn.execute(
-                "SELECT * FROM sidecars WHERE id = ?", (row["sidecar_id"],)
-            ).fetchone()
-        archive_modified = ctx.conn.execute(
-            "SELECT modified_time FROM archives WHERE drive_id = ?",
-            (row["archive_drive_id"],),
-        ).fetchone()["modified_time"]
+            sidecar = media_repo.sidecar(row["sidecar_id"])
+        archive_modified = scan_repo.archive_modified_time(
+            row["archive_drive_id"]
+        )
         capture, source = resolve_capture(row, sidecar, archive_modified)
         resolved.append((row, sidecar, capture, source))
 
     # The histogram covers what the library will hold: these rows, plus the
     # legacy Drive files no media row accounts for.
-    counts = buckets.unaccounted_drive_months(ctx.conn)
+    counts = LayoutRepo(ctx.conn).unaccounted_months()
     counts.update(
         month
         for _, _, capture, _ in resolved
