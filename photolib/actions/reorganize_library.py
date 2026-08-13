@@ -17,6 +17,7 @@ from typing import Iterator
 from photolib import dedupe, enrich, places, repack, scan
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.actions.phases import phase_label
+from photolib.db.geocache_repo import GeocacheRepo
 from photolib.db.job_items_repo import JobItemsRepo
 from photolib.db.scan_repo import ScanRepo
 from photolib.db.settings_repo import PHOTOS_ROOT
@@ -124,7 +125,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     walked_by_id = {file.id: file for file in walked}
     pending = scans.unenriched()
     geocoder = places.Geocoder(
-        ctx.conn, places.api_key_from_env(ctx.config.repo_root)
+        GeocacheRepo(ctx.conn), places.api_key_from_env(ctx.config.repo_root)
     )
     total = len(pending)
     for index, row in enumerate(pending, start=1):

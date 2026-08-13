@@ -16,6 +16,7 @@ from typing import Iterator
 
 from photolib import buckets, places, takeout
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
+from photolib.db.geocache_repo import GeocacheRepo
 from photolib.db.media_repo import MediaRepo
 from photolib.db.scan_repo import ScanRepo
 
@@ -102,7 +103,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     verified_by_crc = media_repo.verified_by_crc()
     live_ids = scan_repo.live_drive_ids()
     geocoder = places.Geocoder(
-        ctx.conn, places.api_key_from_env(ctx.config.repo_root)
+        GeocacheRepo(ctx.conn), places.api_key_from_env(ctx.config.repo_root)
     )
     if not geocoder.enabled:
         yield ProgressEvent(

@@ -1,5 +1,6 @@
 import httpx
 
+from photolib.db.geocache_repo import GeocacheRepo
 from photolib.places import Geocoder, api_key_from_env, cache_key
 
 RESPONSE = {
@@ -17,7 +18,9 @@ RESPONSE = {
 
 def geocoder_with(conn, handler, api_key="test-key"):
     return Geocoder(
-        conn, api_key, http=httpx.Client(transport=httpx.MockTransport(handler))
+        GeocacheRepo(conn),
+        api_key,
+        http=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
 
