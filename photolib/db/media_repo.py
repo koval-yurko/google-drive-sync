@@ -313,3 +313,81 @@ class MediaRepo:
                 "AND m.drive_file_id IS NOT NULL AND m.md5 IS NOT NULL"
             )
             return {(row["crc32"], row["size"]): row for row in rows}
+
+    # ---------- queries for actions and the Review page ----------
+
+    def uploaded_drive_ids(self) -> set[str]:
+        """Drive ids this pipeline uploaded and recorded."""
+        with self._lock:
+            return {
+                row[0]
+                for row in self._conn.execute(
+                    "SELECT drive_file_id FROM media "
+                    "WHERE drive_file_id IS NOT NULL"
+                )
+            }
+
+    def uploaded_with_names(self) -> list[sqlite3.Row]:
+        """Every row recorded as uploaded, with the entry name that
+        identifies it in a report."""
+        with self._lock:
+            return list(
+                self._conn.execute(
+                    "SELECT m.drive_file_id, m.md5, m.target_folder, "
+                    "       m.target_name, e.name "
+                    "FROM media m JOIN entries e ON e.id = m.entry_id "
+                    "WHERE m.upload_status = 'done' "
+                    "ORDER BY e.name"
+                )
+            )
+
+    def sidecar(self, sidecar_id: int) -> sqlite3.Row | None:
+        return self._conn.execute(
+            "SELECT * FROM sidecars WHERE id = ?", (sidecar_id,)
+        ).fetchone()
+
+    def exists(self, entry_id: int) -> bool:
+        row = self._conn.execute(
+            "SELECT id FROM media WHERE entry_id = ?", (entry_id,)
+        ).fetchone()
+        return row is not None
+
+    def review_page(
+        self,
+        *,
+        folder: str | None,
+        duplicates_only: bool,
+        limit: int,
+        offset: int,
+    ) -> dict:
+        """One page of the Review table, with the unpaged total beside it.
+
+        Count and page are taken under one lock so the total cannot describe
+        a different state of the catalog than the rows do.
+        """
+        where, args = [], []
+        if folder:
+            where.append("m.target_folder = ?")
+            args.append(folder)
+        if duplicates_only:
+            where.append("m.duplicate_of IS NOT NULL")
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+
+        with self._lock:
+            total = self._conn.execute(
+                f"SELECT COUNT(*) FROM media m {clause}", args
+            ).fetchone()[0]
+            rows = list(
+                self._conn.execute(
+                    "SELECT m.*, e.path, e.name, e.size AS entry_size, "
+                    "       a.name AS archive_name "
+                    "FROM media m "
+                    "JOIN entries e ON e.id = m.entry_id "
+                    "JOIN archives a ON a.id = e.archive_id "
+                    f"{clause} "
+                    "ORDER BY m.target_folder, m.target_name "
+                    "LIMIT ? OFFSET ?",
+                    [*args, limit, offset],
+                )
+            )
+        return {"total": total, "rows": rows}

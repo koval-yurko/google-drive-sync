@@ -301,3 +301,96 @@ def test_set_plan_allows_a_null_verdict_and_clear_plan_still_resets_it(conn, see
     repo.clear_plan()
     row = repo.all_media()[0]
     assert row["plan_verdict"] is None and row["plan_match"] is None
+
+
+def _seed_uploads(conn):
+    conn.execute(
+        "INSERT INTO archives (drive_id, name, size) VALUES ('z1', 'a.zip', 1)"
+    )
+    for n in (1, 2, 3):
+        conn.execute(
+            "INSERT INTO entries (archive_id, path, name, crc32, size,"
+            " compressed_size, method, local_header_offset, kind) VALUES"
+            f" (1, 'p/IMG_{n}.HEIC', 'IMG_{n}.HEIC', {n}, 1, 1, 8, 0, 'media')"
+        )
+    conn.execute(
+        "INSERT INTO media (entry_id, upload_status, drive_file_id, md5,"
+        " target_folder, target_name) VALUES"
+        " (1, 'done', 'd1', 'abc', '2024-01', 'IMG_1.HEIC')"
+    )
+    conn.execute(
+        "INSERT INTO media (entry_id, upload_status, drive_file_id, md5,"
+        " target_folder, target_name, duplicate_of) VALUES"
+        " (2, 'done', 'd2', 'def', '2024-02', 'IMG_2.HEIC', '2023-05')"
+    )
+    # Never uploaded: no drive_file_id, and not 'done'.
+    conn.execute(
+        "INSERT INTO media (entry_id, upload_status) VALUES (3, 'pending')"
+    )
+    conn.commit()
+
+
+def test_uploaded_drive_ids_skips_rows_with_no_drive_file(conn):
+    _seed_uploads(conn)
+    assert MediaRepo(conn).uploaded_drive_ids() == {"d1", "d2"}
+
+
+def test_uploaded_with_names_returns_done_rows_ordered_by_entry_name(conn):
+    _seed_uploads(conn)
+    rows = MediaRepo(conn).uploaded_with_names()
+    assert [row["name"] for row in rows] == ["IMG_1.HEIC", "IMG_2.HEIC"]
+    assert rows[0]["drive_file_id"] == "d1"
+    assert rows[0]["md5"] == "abc"
+    assert rows[0]["target_folder"] == "2024-01"
+
+
+def test_exists_reports_whether_an_entry_has_a_media_row(conn):
+    _seed_uploads(conn)
+    assert MediaRepo(conn).exists(1) is True
+    assert MediaRepo(conn).exists(999) is False
+
+
+def test_sidecar_returns_the_row_or_none(conn):
+    _seed_uploads(conn)
+    repo = MediaRepo(conn)
+    assert repo.sidecar(999) is None
+    sidecar_id = repo.save_sidecar(1, {"title": "t"}, "{}")
+    assert repo.sidecar(sidecar_id)["title"] == "t"
+
+
+def test_review_page_counts_and_pages(conn):
+    _seed_uploads(conn)
+    page = MediaRepo(conn).review_page(
+        folder=None, duplicates_only=False, limit=1, offset=0
+    )
+    assert page["total"] == 3
+    assert len(page["rows"]) == 1
+
+
+def test_review_page_filters_by_folder_and_duplicates(conn):
+    _seed_uploads(conn)
+    repo = MediaRepo(conn)
+
+    by_folder = repo.review_page(
+        folder="2024-02", duplicates_only=False, limit=50, offset=0
+    )
+    assert by_folder["total"] == 1
+    assert by_folder["rows"][0]["target_name"] == "IMG_2.HEIC"
+
+    dupes = repo.review_page(
+        folder=None, duplicates_only=True, limit=50, offset=0
+    )
+    assert dupes["total"] == 1
+    assert dupes["rows"][0]["duplicate_of"] == "2023-05"
+
+
+def test_review_page_rows_carry_the_entry_and_archive_columns(conn):
+    """routes_review projects these; the row must still have them."""
+    _seed_uploads(conn)
+    row = MediaRepo(conn).review_page(
+        folder="2024-01", duplicates_only=False, limit=1, offset=0
+    )["rows"][0]
+    assert row["name"] == "IMG_1.HEIC"
+    assert row["path"] == "p/IMG_1.HEIC"
+    assert row["archive_name"] == "a.zip"
+    assert row["entry_size"] == 1
