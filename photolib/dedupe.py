@@ -14,6 +14,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from photolib.db.media_repo import MediaRepo
+from photolib.db.scan_repo import ScanRepo
+
 
 @dataclass
 class Removal:
@@ -57,16 +60,7 @@ def plan_removals(drive, conn, root_id: str) -> tuple[list[Removal], list[str], 
         if file.md5 and file.size:
             groups.setdefault(file.md5, []).append((path, file))
 
-    # Iterated, not materialised: `execute` releases the connection lock once
-    # the statement is prepared, so the fetch has to hold it (see
-    # catalog.LockedConnection).
-    with conn.lock:
-        verified = {
-            row[0]
-            for row in conn.execute(
-                "SELECT drive_file_id FROM media WHERE drive_file_id IS NOT NULL"
-            )
-        }
+    verified = MediaRepo(conn).uploaded_drive_ids()
 
     removals: list[Removal] = []
     for copies in groups.values():
@@ -102,8 +96,4 @@ def apply_removal(writer, removal: Removal, conn) -> None:
     """
     writer.trash(removal.drive_id)
     stamp = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        "UPDATE drive_files SET trashed_at = ? WHERE drive_id = ?",
-        (stamp, removal.drive_id),
-    )
-    conn.commit()
+    ScanRepo(conn).mark_trashed(removal.drive_id, stamp)

@@ -10,19 +10,12 @@ property. Folders left empty are trashed, never deleted.
 from __future__ import annotations
 
 import os
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass
 
 from photolib import buckets
+from photolib.db.layout_repo import LayoutRepo
 from photolib.drive.errors import DriveError
-
-FOLDER_QUERY = (
-    "SELECT d.drive_id, d.name, d.parent_path, d.md5, m.id AS media_id, "
-    "       CASE WHEN m.id IS NULL THEN d.capture_hint "
-    "            ELSE m.capture_time END AS capture "
-    "FROM drive_files d LEFT JOIN media m ON m.drive_file_id = d.drive_id "
-    "WHERE d.trashed_at IS NULL ORDER BY d.parent_path, d.name"
-)
 
 
 @dataclass
@@ -34,37 +27,6 @@ class Move:
     to_folder: str
 
 
-def _histogram(conn, exclude: set[str]) -> Counter[str]:
-    """`buckets.library_histogram`, minus files about to be trashed.
-
-    Mirrors its two sources (unaccounted live Drive files, and every
-    catalogued media row) exactly, but drops `exclude`d drive ids from each
-    before counting, so a file dedupe is about to remove does not reserve
-    space in the bucket its month would otherwise need.
-    """
-    counts: Counter[str] = Counter()
-    # Both cursors are iterated, not materialised, and the two halves must
-    # describe one state of the catalog (see catalog.LockedConnection).
-    with conn.lock:
-        for row in conn.execute(
-            "SELECT d.drive_id, d.capture_hint FROM drive_files d "
-            "LEFT JOIN media m ON m.drive_file_id = d.drive_id "
-            "WHERE d.trashed_at IS NULL AND m.id IS NULL"
-        ):
-            if row["drive_id"] in exclude:
-                continue
-            month = buckets.month_of(row["capture_hint"])
-            if month is not None:
-                counts[month] += 1
-        for row in conn.execute("SELECT drive_file_id, capture_time FROM media"):
-            if row["drive_file_id"] in exclude:
-                continue
-            month = buckets.month_of(row["capture_time"])
-            if month is not None:
-                counts[month] += 1
-    return counts
-
-
 def targets_for(conn, exclude: set[str] = frozenset()):
     """Every live catalogued file's bucket target, plus which names already
     sit in each target folder so an arrival can dodge them.
@@ -72,17 +34,11 @@ def targets_for(conn, exclude: set[str] = frozenset()):
     Public — not just an implementation detail of `plan_moves` — because an
     action reporting the full picture (including files that already sit
     where they belong, not just the ones that must move) needs the same
-    `rows`/`targets` this produces. It is one SQL query and some in-memory
-    bucket packing, not another live Drive traversal, so both `plan_moves`
-    and that caller sharing it costs nothing extra worth avoiding by
-    duplicating the bucket-diff logic instead.
+    `rows`/`targets` this produces.
     """
-    with conn.lock:
-        rows = [
-            row for row in conn.execute(FOLDER_QUERY)
-            if row["drive_id"] not in exclude
-        ]
-    fmap = buckets.folder_map(_histogram(conn, exclude))
+    repo = LayoutRepo(conn)
+    rows = repo.live_files_for_layout(exclude)
+    fmap = buckets.folder_map(repo.capture_histogram(exclude))
     targets: dict[str, str] = {}
     # Names already resident per target folder, so arrivals can dodge them.
     names: dict[str, set[str]] = defaultdict(set)
@@ -129,7 +85,8 @@ def plan_moves(
     already at that destination or with another move landing there first.
 
     `exclude` drops files dedupe is about to trash from consideration and
-    from the space they would otherwise reserve — see `_histogram`.
+    from the space they would otherwise reserve — see
+    `LayoutRepo.capture_histogram`.
     """
     rows, targets, names = targets_for(conn, exclude)
     return moves_from_targets(rows, targets, names)
@@ -171,16 +128,7 @@ def apply_move(
         )
         if not already_moved:
             raise
-    conn.execute(
-        "UPDATE drive_files SET parent_path = ?, name = ? WHERE drive_id = ?",
-        (move.to_folder, move.new_name, move.drive_id),
-    )
-    conn.execute(
-        "UPDATE media SET target_folder = ?, target_name = ? "
-        "WHERE drive_file_id = ?",
-        (move.to_folder, move.new_name, move.drive_id),
-    )
-    conn.commit()
+    LayoutRepo(conn).record_move(move.drive_id, move.to_folder, move.new_name)
 
 
 def folder_paths(drive, root_id: str) -> dict[str, str]:

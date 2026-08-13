@@ -9,8 +9,6 @@ about where a month belongs.
 
 from __future__ import annotations
 
-import sqlite3
-from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -61,36 +59,3 @@ def folder_map(counts: dict[str, int]) -> dict[str, str]:
         for month in bucket.months:
             mapping[month] = bucket.name
     return mapping
-
-
-def unaccounted_drive_months(conn: sqlite3.Connection) -> Counter[str]:
-    """Live Drive files no media row accounts for, by capture hint.
-
-    These are the legacy files that predate the pipeline; the catalog knows
-    nothing about them beyond what Drive itself reports.
-    """
-    counts: Counter[str] = Counter()
-    # Iterated, not materialised: `execute` releases the connection lock once
-    # the statement is prepared (see catalog.LockedConnection).
-    with conn.lock:
-        for row in conn.execute(
-            "SELECT d.capture_hint FROM drive_files d "
-            "LEFT JOIN media m ON m.drive_file_id = d.drive_id "
-            "WHERE d.trashed_at IS NULL AND m.id IS NULL"
-        ):
-            month = month_of(row["capture_hint"])
-            if month is not None:
-                counts[month] += 1
-    return counts
-
-
-def library_histogram(conn: sqlite3.Connection) -> Counter[str]:
-    """Every file the library will eventually hold, by month: catalogued
-    media (uploaded or not) plus the unaccounted Drive files."""
-    counts = unaccounted_drive_months(conn)
-    with conn.lock:
-        for row in conn.execute("SELECT capture_time FROM media"):
-            month = month_of(row["capture_time"])
-            if month is not None:
-                counts[month] += 1
-    return counts

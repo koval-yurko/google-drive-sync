@@ -12,7 +12,9 @@ from __future__ import annotations
 from typing import Iterator
 
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
+from photolib.db.media_repo import MediaRepo
 from photolib.db.settings_repo import PHOTOS_ROOT
+from photolib.db.tags_repo import TagsRepo
 from photolib.drive.errors import DriveError
 
 ID = "verify_library"
@@ -77,12 +79,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
 
     yield ProgressEvent(f"Drive holds {len(live)} file(s).", progress=0.3)
 
-    uploaded = list(ctx.conn.execute(
-        "SELECT m.drive_file_id, m.md5, m.target_folder, m.target_name, e.name "
-        "FROM media m JOIN entries e ON e.id = m.entry_id "
-        "WHERE m.upload_status = 'done' "
-        "ORDER BY e.name"
-    ))
+    uploaded = MediaRepo(ctx.conn).uploaded_with_names()
 
     # `missing` and `unconfirmed` are not mutually exclusive: a row with a
     # real `drive_file_id` but no confirmed `md5` still gets the live lookup,
@@ -111,14 +108,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
         if md5 is not None and md5 != row["md5"]:
             mismatched.append(row["name"])
 
-    orphans = [
-        r["drive_id"] for r in ctx.conn.execute(
-            "SELECT DISTINCT ft.drive_id FROM file_tags ft "
-            "LEFT JOIN drive_files d ON d.drive_id = ft.drive_id "
-            "WHERE d.drive_id IS NULL "
-            "ORDER BY ft.drive_id"
-        )
-    ]
+    orphans = TagsRepo(ctx.conn).orphaned_drive_ids()
 
     categories = (
         ("file(s) recorded as uploaded are no longer in Drive", missing),

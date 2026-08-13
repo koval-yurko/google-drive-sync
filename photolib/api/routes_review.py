@@ -34,37 +34,17 @@ def media(
     folder: str | None = None,
     duplicates_only: bool = False,
 ) -> dict:
-    conn = request.app.state.conn
-
-    where, args = [], []
-    if folder:
-        where.append("m.target_folder = ?")
-        args.append(folder)
-    if duplicates_only:
-        where.append("m.duplicate_of IS NOT NULL")
-    clause = f"WHERE {' AND '.join(where)}" if where else ""
-
-    total = conn.execute(
-        f"SELECT COUNT(*) FROM media m {clause}", args
-    ).fetchone()[0]
-
-    rows = conn.execute(
-        "SELECT m.*, e.path, e.name, e.size AS entry_size, "
-        "       a.name AS archive_name "
-        "FROM media m "
-        "JOIN entries e ON e.id = m.entry_id "
-        "JOIN archives a ON a.id = e.archive_id "
-        f"{clause} "
-        "ORDER BY m.target_folder, m.target_name "
-        "LIMIT ? OFFSET ?",
-        [*args, limit, offset],
+    page = MediaRepo(request.app.state.conn).review_page(
+        folder=folder,
+        duplicates_only=duplicates_only,
+        limit=limit,
+        offset=offset,
     )
-
     return {
-        "total": total,
+        "total": page["total"],
         "rows": [
             {**{f: row[f] for f in ROW_FIELDS}, "size": row["entry_size"]}
-            for row in rows
+            for row in page["rows"]
         ],
     }
 
@@ -72,11 +52,8 @@ def media(
 @router.post("/review/retry/{entry_id}")
 def retry(request: Request, entry_id: int) -> dict:
     """Queue a failed file for another attempt, forgetting the last one."""
-    conn = request.app.state.conn
-    row = conn.execute(
-        "SELECT id FROM media WHERE entry_id = ?", (entry_id,)
-    ).fetchone()
-    if row is None:
+    repo = MediaRepo(request.app.state.conn)
+    if not repo.exists(entry_id):
         raise HTTPException(status_code=404, detail="no such media entry")
-    MediaRepo(conn).reset_upload(entry_id)
+    repo.reset_upload(entry_id)
     return {"entry_id": entry_id, "upload_status": "pending"}

@@ -1,13 +1,4 @@
-from collections import Counter
-
-from photolib.buckets import (
-    UNKNOWN_FOLDER,
-    folder_map,
-    library_histogram,
-    month_of,
-    pack,
-    unaccounted_drive_months,
-)
+from photolib.buckets import UNKNOWN_FOLDER, folder_map, month_of, pack
 
 
 def test_month_of_formats_utc_and_tolerates_none():
@@ -53,49 +44,3 @@ def test_folder_map_covers_every_month():
 
 def test_unknown_folder_name():
     assert UNKNOWN_FOLDER == "unknown-date"
-
-
-def _seed(conn):
-    conn.execute(
-        "INSERT INTO archives (drive_id, name, size) VALUES ('z1', 'a.zip', 1)"
-    )
-    conn.execute(
-        "INSERT INTO entries (archive_id, path, name, crc32, size,"
-        " compressed_size, method, local_header_offset, kind) VALUES"
-        " (1, 'p/IMG_1.HEIC', 'IMG_1.HEIC', 1, 1, 1, 8, 0, 'media')"
-    )
-    # A catalogued file: its month comes from media.capture_time.
-    conn.execute(
-        "INSERT INTO media (entry_id, capture_time, drive_file_id)"
-        " VALUES (1, 1704067200, 'd1')"          # 2024-01
-    )
-    conn.execute(
-        "INSERT INTO drive_files (drive_id, name, parent_path, capture_hint)"
-        " VALUES ('d1', 'IMG_1.HEIC', '2024-01', 1500000000)"
-    )
-    # An unaccounted legacy file: only its hint dates it.
-    conn.execute(
-        "INSERT INTO drive_files (drive_id, name, parent_path, capture_hint)"
-        " VALUES ('d2', 'IMG_2.HEIC', 'back_2024_01', 1704153600)"   # 2024-01
-    )
-    # A trashed file counts for nothing.
-    conn.execute(
-        "INSERT INTO drive_files (drive_id, name, parent_path, capture_hint,"
-        " trashed_at) VALUES ('d3', 'IMG_3.HEIC', 'x', 1704240000, 'now')"
-    )
-    # An undated legacy file is skipped by the histograms.
-    conn.execute(
-        "INSERT INTO drive_files (drive_id, name, parent_path)"
-        " VALUES ('d4', 'IMG_4.HEIC', 'back_2024_01')"
-    )
-    conn.commit()
-
-
-def test_unaccounted_drive_months_skips_catalogued_trashed_and_undated(conn):
-    _seed(conn)
-    assert unaccounted_drive_months(conn) == Counter({"2024-01": 1})
-
-
-def test_library_histogram_counts_media_and_unaccounted_files(conn):
-    _seed(conn)
-    assert library_histogram(conn) == Counter({"2024-01": 2})
