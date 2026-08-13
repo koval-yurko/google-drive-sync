@@ -34,10 +34,12 @@ class _StrictMoveWriter:
     def __init__(self, parents: dict[str, list[str]]) -> None:
         self.parents = parents
         self.calls = 0
+        self.properties: dict | None = None
 
     def move(self, file_id, *, add_parent, remove_parent, name=None,
              properties=None) -> None:
         self.calls += 1
+        self.properties = properties
         current = self.parents[file_id]
         if remove_parent not in current:
             raise DriveError("400: parent is not a parent of this file")
@@ -116,6 +118,65 @@ def test_excluded_files_do_not_reserve_bucket_space(conn):
     }
     assert with_all == {"2025-01"}
     assert without != with_all
+
+
+def test_an_undated_file_goes_to_the_unknown_folder(conn):
+    """A file Drive never dated has no month to bucket by, so it lands in
+    `buckets.UNKNOWN_FOLDER` rather than being left where it is
+    (repack.py: `fmap[month] if month else buckets.UNKNOWN_FOLDER`)."""
+    conn.execute(
+        "INSERT INTO drive_files "
+        "(drive_id, name, parent_path, md5, size, mime_type, capture_hint) "
+        "VALUES ('d9', 'IMG_9.MOV', 'back_2019', 'ddd', 4, "
+        "'video/quicktime', NULL)"
+    )
+    conn.commit()
+    moves = plan_moves(FakeDrive(), conn, "root")
+    assert [(m.drive_id, m.to_folder) for m in moves] == [("d9", "unknown-date")]
+
+
+def test_a_catalogued_undated_file_ignores_its_drive_capture_hint(conn):
+    """`FOLDER_QUERY` prefers `media.capture_time` once a file is catalogued.
+
+    The `drive_files` hint is an upload timestamp, not a capture date, so it
+    must not steer a file the catalog positively knows is undated — the
+    `CASE WHEN m.id IS NULL` half of the query.
+    """
+    conn.execute(
+        "INSERT INTO archives (drive_id, name, size) VALUES ('z1', 'a.zip', 1)"
+    )
+    conn.execute(
+        "INSERT INTO entries (archive_id, path, name, crc32, size,"
+        " compressed_size, method, local_header_offset, kind) VALUES"
+        " (1, 'p/d4.heic', 'd4.heic', 4, 1, 1, 8, 0, 'media')"
+    )
+    conn.execute(
+        "INSERT INTO media (entry_id, capture_time, target_folder, target_name,"
+        " upload_status, drive_file_id)"
+        " VALUES (1, NULL, '2023-12', 'd4.heic', 'done', 'd4')"
+    )
+    # The stale hint says 2025-01; the catalog says undated and wins.
+    _seed(conn, [("d4", "2023-12", "2025-01")])
+
+    moves = plan_moves(FakeDrive(), conn, "root")
+    assert [(m.drive_id, m.to_folder) for m in moves] == [("d4", "unknown-date")]
+
+
+def test_a_move_strips_the_retired_place_property(conn):
+    """`place` is retired: nothing writes it any more, and the one
+    `files.update` a move already costs clears whatever Organize once left
+    behind, for free."""
+    _seed(conn, [("d1", "back_2019", "2025-01")])
+    move = Move(
+        drive_id="d1", name="d1.heic", new_name="d1.heic",
+        from_path="back_2019", to_folder="2025-01",
+    )
+    parents = {"d1": ["old-id"]}
+    writer = _StrictMoveWriter(parents)
+
+    apply_move(writer, conn, move, {"back_2019": "old-id", "2025-01": "new-id"})
+
+    assert writer.properties == {"place": None}
 
 
 def test_a_name_collision_in_the_destination_is_renamed(conn):

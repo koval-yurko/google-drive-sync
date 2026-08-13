@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from photolib.actions import check_connection
+from photolib.actions.steps import check_connection
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.actions.registry import UnknownActionError, all_actions, discovery_errors, get_action
 from photolib.config import Config
@@ -19,13 +19,37 @@ def make_ctx(conn, drive) -> ActionContext:
     )
 
 
-def test_registry_discovers_check_connection():
-    ids = [spec.id for spec in all_actions()]
-    assert "check_connection" in ids
+def test_the_registry_holds_only_the_flows_and_the_tools():
+    """The registry publishes a page per entry, so anything discovered here
+    is a page a user can reach. Implementation phases must not appear."""
+    ids = {spec.id for spec in all_actions()}
+    assert ids == {"sync_archives", "reorganize_library", "sync_tags",
+                   "verify_library"}
+
+
+def test_modules_under_steps_are_not_discovered_as_actions():
+    """The subpackage is the mechanism, not a naming convention.
+
+    pkgutil.iter_modules does not recurse, so a module in steps/ cannot
+    become a page no matter what attributes it declares. If someone
+    flattens the package back out, this fails.
+    """
+    ids = {spec.id for spec in all_actions()}
+    for phase in (
+        "check_connection", "scan_archives", "pair_metadata",
+        "plan_organize", "organize",
+    ):
+        assert phase not in ids
+
+    # ...and they are still importable and still runnable by the flow.
+    from photolib.actions.steps import organize
+
+    assert callable(organize.run)
+    assert organize.Params().model_dump() is not None
 
 
 def test_registry_specs_are_complete():
-    spec = get_action("check_connection")
+    spec = get_action("verify_library")
     assert spec.title
     assert spec.description
     assert spec.json_schema()["type"] == "object"
@@ -154,14 +178,14 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     ids = [spec.id for spec in actions]
     assert "test_well_formed_action" in ids
 
-    # Verify it's in the right sorted position (ORDER=100 puts it after check_connection ORDER=0)
     spec = get_action("test_well_formed_action")
     assert spec.title == "Test Well Formed"
     assert spec.description == "A test action"
 
-    # Verify sorting by (order, id)
-    check_conn_spec = get_action("check_connection")
-    assert (check_conn_spec.order, check_conn_spec.id) < (spec.order, spec.id)
+    # Verify sorting by (order, id): verify_library is ORDER 90, the temp
+    # module is ORDER 100, and neither is a flow.
+    anchor = get_action("verify_library")
+    assert (anchor.order, anchor.id) < (spec.order, spec.id)
 
 
 def test_module_missing_required_attribute_is_skipped(cleanup_temp_modules):
@@ -187,8 +211,8 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     ids = [spec.id for spec in actions]
     assert "test_missing_attr_action" not in ids
 
-    # check_connection should still be discovered
-    assert "check_connection" in ids
+    # a real action should still be discovered
+    assert "verify_library" in ids
 
 
 def test_module_that_raises_on_import_is_skipped(cleanup_temp_modules):
@@ -203,8 +227,8 @@ raise RuntimeError("Intentional import error for testing")
     ids = [spec.id for spec in actions]
     assert "test_import_error_action" not in ids
 
-    # check_connection should still be discovered
-    assert "check_connection" in ids
+    # a real action should still be discovered
+    assert "verify_library" in ids
 
     # Error should be recorded
     errors = discovery_errors()
@@ -235,8 +259,8 @@ def run(ctx: ActionContext, params: Params):
     ids = [spec.id for spec in actions]
     assert "test_non_generator_action" not in ids
 
-    # check_connection should still be discovered
-    assert "check_connection" in ids
+    # a real action should still be discovered
+    assert "verify_library" in ids
 
     # Error should be recorded
     errors = discovery_errors()
@@ -246,12 +270,12 @@ def run(ctx: ActionContext, params: Params):
 
 def test_duplicate_id_raises_error(cleanup_temp_modules):
     """Two modules with the same ID raise an error naming both modules."""
-    # Create a module with the same ID as check_connection
+    # Create a module with the same ID as a real, registered action
     code = '''"""Test action with duplicate ID."""
 from typing import Iterator
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 
-ID = "check_connection"
+ID = "verify_library"
 TITLE = "Duplicate"
 DESCRIPTION = "Duplicate ID"
 ORDER = 200
@@ -271,14 +295,16 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
 
     error_message = str(exc_info.value)
     assert "Duplicate" in error_message
-    assert "check_connection" in error_message
+    assert "verify_library" in error_message
     assert "test_duplicate_id_action_1" in error_message
 
 
 def test_actions_default_to_the_advanced_group():
     from photolib.actions.registry import get_action
 
-    assert get_action("scan_archives").group == "advanced"
+    # sync_tags declares no GROUP and so falls back to base.py's default.
+    # Plan B folds it into Reorganize Folders and retires the default with it.
+    assert get_action("sync_tags").group == "advanced"
 
 
 def test_flows_sort_ahead_of_advanced_actions():
@@ -286,9 +312,3 @@ def test_flows_sort_ahead_of_advanced_actions():
 
     groups = [spec.group for spec in all_actions()]
     assert groups == sorted(groups, key=lambda g: g != "flow")
-
-
-def test_reorganize_is_retitled_repack_buckets():
-    from photolib.actions.registry import get_action
-
-    assert get_action("reorganize").title == "Repack Buckets"

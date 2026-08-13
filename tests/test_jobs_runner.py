@@ -29,13 +29,13 @@ def runner(conn):
 
 
 def test_runs_a_job_to_completion(runner, conn):
-    job = runner.submit("check_connection", {})
+    job = runner.submit("verify_library", {})
     runner.wait_idle()
     assert JobsRepo(conn).get(job.id).status == "done"
 
 
 def test_records_events_from_the_action(runner, conn):
-    job = runner.submit("check_connection", {})
+    job = runner.submit("verify_library", {})
     runner.wait_idle()
     events = JobsRepo(conn).events(job.id)
     assert events
@@ -49,14 +49,14 @@ def test_failure_is_captured(runner, conn, monkeypatch):
 
     from photolib.actions import registry
 
-    spec = registry.get_action("check_connection")
+    spec = registry.get_action("verify_library")
     monkeypatch.setattr(
         registry, "get_action", lambda _id: type(spec)(
             id=spec.id, title=spec.title, description=spec.description,
             order=spec.order, params_model=spec.params_model, run=explode,
         )
     )
-    job = runner.submit("check_connection", {})
+    job = runner.submit("verify_library", {})
     runner.wait_idle()
     stored = JobsRepo(conn).get(job.id)
     assert stored.status == "failed"
@@ -65,7 +65,7 @@ def test_failure_is_captured(runner, conn, monkeypatch):
 
 def test_subscribers_receive_live_events(runner, conn):
     broker = runner.broker
-    job = runner.submit("check_connection", {})
+    job = runner.submit("verify_library", {})
     queue_ = broker.subscribe(job.id)
     runner.wait_idle()
     broker.publish(job.id, {"type": "sentinel"})
@@ -76,8 +76,8 @@ def test_subscribers_receive_live_events(runner, conn):
 
 
 def test_jobs_run_one_at_a_time(runner, conn):
-    first = runner.submit("check_connection", {})
-    second = runner.submit("check_connection", {})
+    first = runner.submit("verify_library", {})
+    second = runner.submit("verify_library", {})
     runner.wait_idle()
     repo = JobsRepo(conn)
     assert repo.get(first.id).status == "done"
@@ -85,7 +85,7 @@ def test_jobs_run_one_at_a_time(runner, conn):
 
 
 def test_wait_idle_waits_for_every_rapidly_submitted_job(runner, conn):
-    jobs = [runner.submit("check_connection", {}) for _ in range(5)]
+    jobs = [runner.submit("verify_library", {}) for _ in range(5)]
     runner.wait_idle()
     repo = JobsRepo(conn)
     for job in jobs:
@@ -114,7 +114,7 @@ def test_stop_then_start_again_works(conn):
     r.stop()
     r.start()
     try:
-        job = r.submit("check_connection", {})
+        job = r.submit("verify_library", {})
         r.wait_idle()
         assert repo.get(job.id).status == "done"
     finally:
@@ -130,11 +130,11 @@ def test_phase_and_item_counts_reach_the_job_row(runner, conn, monkeypatch):
         yield ProgressEvent("finishing", progress=0.9, phase="Upload (2/2)",
                             done=4, total=4)
 
-    spec = registry.get_action("check_connection")
+    spec = registry.get_action("verify_library")
     monkeypatch.setattr(spec, "run", phased)
     monkeypatch.setattr(registry, "get_action", lambda _id: spec)
 
-    job = runner.submit("check_connection", {})
+    job = runner.submit("verify_library", {})
     runner.wait_idle()
     reloaded = JobsRepo(conn).get(job.id)
     assert reloaded.phase == "Upload (2/2)"
@@ -151,11 +151,11 @@ def test_run_id_reaches_the_action(runner, conn, monkeypatch):
         seen["cancellable"] = ctx.cancelled is not None
         yield ProgressEvent("ok", progress=1.0)
 
-    spec = registry.get_action("check_connection")
+    spec = registry.get_action("verify_library")
     monkeypatch.setattr(spec, "run", peek)
     monkeypatch.setattr(registry, "get_action", lambda _id: spec)
 
-    job = runner.submit("check_connection", {})
+    job = runner.submit("verify_library", {})
     runner.wait_idle()
     assert seen["run_id"] == JobsRepo(conn).get(job.id).run_id
     assert seen["cancellable"] is True
@@ -186,10 +186,10 @@ def test_an_action_without_run_id_in_params_still_gets_one_generated(
 ):
     """Regression guard: every existing action (no `run_id` field in its
     Params) must keep getting a fresh run_id, not None or a KeyError."""
-    job = runner.submit("check_connection", {})
+    job = runner.submit("verify_library", {})
     runner.wait_idle()
     assert job.run_id
-    other = runner.submit("check_connection", {})
+    other = runner.submit("verify_library", {})
     runner.wait_idle()
     assert other.run_id != job.run_id
 
@@ -222,11 +222,11 @@ def test_cancelling_a_running_job_stops_it_and_keeps_checkpoints(
             closed["yes"] = True
             raise
 
-    spec = registry.get_action("check_connection")
+    spec = registry.get_action("verify_library")
     monkeypatch.setattr(spec, "run", slow)
     monkeypatch.setattr(registry, "get_action", lambda _id: spec)
 
-    job = runner.submit("check_connection", {})
+    job = runner.submit("verify_library", {})
     assert started.wait(timeout=5.0)
     runner.cancel(job.id)
     may_proceed.set()
@@ -266,11 +266,11 @@ def test_a_generator_that_returns_on_cancellation_is_marked_cancelled_not_done(
             return
         yield ProgressEvent("second", progress=1.0)  # pragma: no cover
 
-    spec = registry.get_action("check_connection")
+    spec = registry.get_action("verify_library")
     monkeypatch.setattr(spec, "run", self_cancelling)
     monkeypatch.setattr(registry, "get_action", lambda _id: spec)
 
-    job = runner.submit("check_connection", {})
+    job = runner.submit("verify_library", {})
     assert started.wait(timeout=5.0)
     runner.cancel(job.id)
     may_proceed.set()
@@ -289,12 +289,12 @@ def test_cancelling_a_queued_job_never_starts_it(runner, conn, monkeypatch):
         ran["yes"] = True
         yield ProgressEvent("should not happen", progress=1.0)
 
-    spec = registry.get_action("check_connection")
+    spec = registry.get_action("verify_library")
     monkeypatch.setattr(spec, "run", never)
     monkeypatch.setattr(registry, "get_action", lambda _id: spec)
 
     runner.stop()
-    job = runner.submit("check_connection", {})
+    job = runner.submit("verify_library", {})
     assert runner.cancel(job.id) is True
     runner.start()
     runner.wait_idle()
@@ -303,7 +303,7 @@ def test_cancelling_a_queued_job_never_starts_it(runner, conn, monkeypatch):
 
 
 def test_cancelling_a_finished_job_is_false(runner, conn):
-    job = runner.submit("check_connection", {})
+    job = runner.submit("verify_library", {})
     runner.wait_idle()
     assert runner.cancel(job.id) is False
 
@@ -319,7 +319,7 @@ def test_cancel_of_a_done_job_never_moves_it_off_terminal_status(
     the call through cancel() itself, all the way into the guarded UPDATE
     in JobsRepo.mark_cancelled.
     """
-    job = runner.submit("check_connection", {})
+    job = runner.submit("verify_library", {})
     runner.wait_idle()
     done = JobsRepo(conn).get(job.id)
     assert done.status == "done"
@@ -347,12 +347,12 @@ def test_cancelling_a_queued_job_never_emits_running_or_sets_started_at(
         ran["yes"] = True
         yield ProgressEvent("should not happen", progress=1.0)
 
-    spec = registry.get_action("check_connection")
+    spec = registry.get_action("verify_library")
     monkeypatch.setattr(spec, "run", never)
     monkeypatch.setattr(registry, "get_action", lambda _id: spec)
 
     runner.stop()
-    job = runner.submit("check_connection", {})
+    job = runner.submit("verify_library", {})
     subscription = runner.broker.subscribe(job.id)
     assert runner.cancel(job.id) is True
     runner.start()
@@ -381,7 +381,7 @@ def test_cancel_of_a_job_that_finishes_in_the_race_window_leaves_no_registry_ent
     (it would otherwise leak for the life of the process, since _execute
     will never run again for this job_id to pop it).
     """
-    job = runner.submit("check_connection", {})
+    job = runner.submit("verify_library", {})
     runner.wait_idle()
     finished = JobsRepo(conn).get(job.id)
     assert finished.status == "done"

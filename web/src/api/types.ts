@@ -32,7 +32,9 @@ export interface ActionSpec {
   title: string
   description: string
   order: number
-  group: 'flow' | 'advanced'
+  // 'advanced' stays in the union only because sync_tags still emits it;
+  // Plan B removes it.
+  group: 'flow' | 'tool' | 'advanced'
   schema: ActionSchema
 }
 

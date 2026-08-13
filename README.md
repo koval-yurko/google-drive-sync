@@ -96,24 +96,25 @@ bucket falls — Repack corrects for that. The existing `back_*` folders are
 indexed for duplicate detection and otherwise left alone; Repack folds their
 files into buckets and trashes them once empty, same as everything else.
 
-## Advanced
+## Actions
 
-The phases above also exist as their own actions, for re-running a single
-phase in isolation or for recovering a flow that needs a nudge partway
-through.
+Two flows do the work. Two further actions stand alone: one pushes tags to
+Drive, one reports drift. Everything else is a phase inside a flow, not a
+button — a killed run resumes from `job_items` rather than needing a phase
+re-run by hand.
 
 | Action | Does | Writes to Drive |
 | --- | --- | --- |
-| Check Connection | Verifies credentials and folders | No |
-| Scan Archives | Indexes archive contents and the destination folder | No |
-| Pair Metadata | Matches sidecars to media across archive parts | No |
-| Plan Organization | Resolves dates, countries, duplicate verdicts, destinations | No |
-| Organize Photos | Uploads every planned file into its destination bucket folder | Yes |
-| Repack Buckets | Moves every indexed file into its bucket folder, trashing what's left empty | Yes |
-| Clear Stale Trees | Moves a redundant extracted tree to Drive's trash | Yes |
-| Clear Duplicates | Trashes byte-identical copies inside the Global Photos folder, keeping one | Yes |
+| Sync from Archives | Extracts every file from the ZIPs into the Global Photos folder, skipping what is already there | Yes, after confirm |
+| Reorganize Folders | Indexes, enriches, dedupes, repacks into ~100-file buckets and sweeps the empties | Yes, after confirm |
 | Sync Tags to Drive | Mirrors tags onto each file's `appProperties` | Yes |
 | Verify Library | Compares the catalog against what Drive actually holds and reports drift | No |
+
+Sync from Archives runs five phases — Connect, Scan, Pair, Plan, Upload —
+implemented in `photolib/actions/steps/`. They are deliberately not actions:
+`registry._discover` walks `photolib/actions/` without recursing, so a module
+in `steps/` cannot become a page. Run the flow, not the phase; a killed run
+resumes from `job_items` rather than restarting.
 
 ## Resuming and cancelling
 
@@ -190,15 +191,6 @@ are cleared automatically.
 `downloads/` is gitignored, and nothing is kept there after a successful
 upload.
 
-## Clearing the stale trees
-
-`Clear Stale Trees` takes the Drive folder id of one extracted tree and reports
-what it would trash without changing anything. A file is eligible only when a
-file of the same name has already been uploaded **and** verified against Drive's
-own MD5. Re-run with `confirm` to act. It moves files to Drive's trash, where
-they stay recoverable; nothing is permanently deleted and the source archives
-are never touched.
-
 ## Browsing and tagging
 
 The Library page shows what Drive actually holds under `photos_root`, grouped
@@ -274,10 +266,15 @@ credentials live in the main checkout, so point the live suite at it:
 ## Adding an action
 
 Create a module in `photolib/actions/` declaring `ID`, `TITLE`, `DESCRIPTION`,
-`ORDER`, a `Params` model extending `ActionParams`, and a `run(ctx, params)` generator that
-yields `ProgressEvent`s. The registry discovers it automatically and the
-frontend renders a page for it — no frontend changes required. An optional
-`GROUP` attribute, `"flow"` or `"advanced"`, decides which section of the
-sidebar it lands in; it defaults to `"advanced"`, so a new action has to opt
-in to being one of the two flows. `ORDER` sorts within a group, not across
+`ORDER`, a `Params` model extending `ActionParams`, and a `run(ctx, params)`
+generator that yields `ProgressEvent`s. The registry discovers it
+automatically and the frontend renders a page for it — no frontend changes
+required. An optional `GROUP` attribute, `"flow"` or `"tool"`, decides which
+section of the sidebar it lands in. `ORDER` sorts within a group, not across
 both.
+
+Discovery does **not** recurse. A module under `photolib/actions/steps/` is
+therefore a phase of a flow, never a page, however many of those attributes
+it declares — that is what keeps Sync from Archives' five phases out of the
+sidebar. Put a new phase there and import it from its flow; put a new
+standalone action one directory up.

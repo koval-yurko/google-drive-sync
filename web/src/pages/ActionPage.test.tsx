@@ -25,7 +25,7 @@ const getDownloads = vi.fn(async () => ({
 }))
 
 const baseJob: Job = {
-  id: 'job-1', action: 'check_connection', params: {}, status: 'done',
+  id: 'job-1', action: 'verify_library', params: {}, status: 'done',
   progress: 1, message: null, error: null, created_at: '', started_at: null,
   finished_at: null, run_id: 'run-1', resumed_from: null, phase: null,
   items_done: 0, items_total: 0,
@@ -43,11 +43,11 @@ vi.mock('../api/client', () => ({
 
 const ACTIONS: ActionSpec[] = [
   {
-    id: 'check_connection',
-    title: 'Check Connection',
+    id: 'verify_library',
+    title: 'Verify Library',
     description: 'Verify Drive access.',
-    order: 0,
-    group: 'advanced',
+    order: 90,
+    group: 'tool',
     schema: { type: 'object', properties: {} },
   },
   {
@@ -55,7 +55,7 @@ const ACTIONS: ActionSpec[] = [
     title: 'Organize Photos',
     description: 'Upload every planned file.',
     order: 40,
-    group: 'advanced',
+    group: 'tool',
     schema: { type: 'object', properties: {} },
   },
   {
@@ -63,7 +63,7 @@ const ACTIONS: ActionSpec[] = [
     title: 'Clear Stale Trees',
     description: 'Trash a verified extracted tree.',
     order: 50,
-    group: 'advanced',
+    group: 'tool',
     schema: {
       type: 'object',
       properties: {
@@ -102,8 +102,8 @@ afterEach(() => vi.clearAllMocks())
 
 describe('ActionPage', () => {
   it('shows the action title and description', () => {
-    renderAt('/actions/check_connection')
-    expect(screen.getByText('Check Connection')).toBeTruthy()
+    renderAt('/actions/verify_library')
+    expect(screen.getByText('Verify Library')).toBeTruthy()
     expect(screen.getByText('Verify Drive access.')).toBeTruthy()
   })
 
@@ -113,9 +113,9 @@ describe('ActionPage', () => {
   })
 
   it('runs the action when the button is clicked', async () => {
-    renderAt('/actions/check_connection')
+    renderAt('/actions/verify_library')
     await userEvent.click(screen.getByRole('button', { name: /run/i }))
-    expect(runAction).toHaveBeenCalledWith('check_connection', {})
+    expect(runAction).toHaveBeenCalledWith('verify_library', {})
   })
 
   it('sends the filled-in parameters when the action has some', async () => {
@@ -142,7 +142,7 @@ describe('ActionPage', () => {
   })
 
   it('does not poll for downloads on other actions', async () => {
-    renderAt('/actions/check_connection')
+    renderAt('/actions/verify_library')
     await userEvent.click(screen.getByRole('button', { name: /run/i }))
     expect(getDownloads).not.toHaveBeenCalled()
   })
@@ -171,9 +171,9 @@ describe('ActionPage', () => {
   })
 
   it('does not offer to confirm a run that is not a finished flow', async () => {
-    // Advanced action: getJob's default mock ('check_connection', 'done')
-    // applies, but group is 'advanced', not 'flow'.
-    renderAt('/actions/check_connection')
+    // Tool action: getJob's default mock ('verify_library', 'done') applies,
+    // but group is 'tool', not 'flow'.
+    renderAt('/actions/verify_library')
     await userEvent.click(screen.getByRole('button', { name: /run/i }))
     await screen.findByText(/status/i)
     expect(

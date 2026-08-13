@@ -16,12 +16,12 @@ import pytest
 
 from photolib import transfer
 from photolib.actions.base import ActionContext
-from photolib.actions.pair_metadata import Params as PairParams
-from photolib.actions.pair_metadata import run as pair
-from photolib.actions.plan_organize import Params as PlanParams
-from photolib.actions.plan_organize import run as plan
-from photolib.actions.scan_archives import Params as ScanParams
-from photolib.actions.scan_archives import run as scan
+from photolib.actions.steps.pair_metadata import Params as PairParams
+from photolib.actions.steps.pair_metadata import run as pair
+from photolib.actions.steps.plan_organize import Params as PlanParams
+from photolib.actions.steps.plan_organize import run as plan
+from photolib.actions.steps.scan_archives import Params as ScanParams
+from photolib.actions.steps.scan_archives import run as scan
 from photolib.config import Config
 from photolib.db import catalog
 from photolib.db.media_repo import MediaRepo

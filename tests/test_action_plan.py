@@ -6,11 +6,11 @@ import pytest
 
 from photolib.actions import verify_library
 from photolib.actions.base import ActionContext
-from photolib.actions.pair_metadata import Params as PairParams
-from photolib.actions.pair_metadata import run as pair
-from photolib.actions.plan_organize import Params, resolve_capture, run
-from photolib.actions.scan_archives import Params as ScanParams
-from photolib.actions.scan_archives import run as scan
+from photolib.actions.steps.pair_metadata import Params as PairParams
+from photolib.actions.steps.pair_metadata import run as pair
+from photolib.actions.steps.plan_organize import Params, resolve_capture, run
+from photolib.actions.steps.scan_archives import Params as ScanParams
+from photolib.actions.steps.scan_archives import run as scan
 from photolib.config import Config
 from photolib.db import catalog
 from photolib.db.media_repo import MediaRepo
@@ -329,7 +329,7 @@ def test_name_collisions_within_a_month_are_disambiguated(ctx):
     assert len(set(targets)) == 2, "colliding targets must be disambiguated"
 
 
-from photolib.actions.plan_organize import verdict_for
+from photolib.actions.steps.plan_organize import verdict_for
 
 
 class _Row(dict):

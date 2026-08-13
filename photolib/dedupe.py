@@ -89,13 +89,8 @@ def plan_removals(drive, conn, root_id: str) -> tuple[list[Removal], list[str], 
     return removals, empty_ids, len(files)
 
 
-def apply_removal(
-    writer, removal: Removal, conn, stamp: str | None = None
-) -> None:
+def apply_removal(writer, removal: Removal, conn) -> None:
     """Trash the redundant copy and stamp it trashed in the catalog.
-
-    `stamp` lets a caller trashing a whole batch record one shared
-    `trashed_at` for all of them; `None` means "now".
 
     Safe to replay: Drive's trash guide says a trashed file stays retrievable
     by `files.get` — and therefore still patchable — until it is
@@ -106,8 +101,7 @@ def apply_removal(
     `UPDATE` below is an ordinary overwrite, harmless to repeat.
     """
     writer.trash(removal.drive_id)
-    if stamp is None:
-        stamp = datetime.now(timezone.utc).isoformat()
+    stamp = datetime.now(timezone.utc).isoformat()
     conn.execute(
         "UPDATE drive_files SET trashed_at = ? WHERE drive_id = ?",
         (stamp, removal.drive_id),

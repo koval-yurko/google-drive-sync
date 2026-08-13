@@ -3,7 +3,11 @@ import type { ActionSpec } from '../api/types'
 
 export function Nav({ actions }: { actions: ActionSpec[] }) {
   const flows = actions.filter((a) => a.group === 'flow')
-  const advanced = actions.filter((a) => a.group !== 'flow')
+  // `!== 'flow'` rather than `=== 'tool'` on purpose: sync_tags still
+  // defaults to "advanced" until Plan B folds it, and an exact match would
+  // drop it out of the sidebar while it is still the only way to push tags
+  // to Drive.
+  const tools = actions.filter((a) => a.group !== 'flow')
 
   return (
     <nav className="nav">
@@ -31,14 +35,12 @@ export function Nav({ actions }: { actions: ActionSpec[] }) {
         <NavLink to="/jobs">Jobs</NavLink>
       </section>
       <section>
-        <details>
-          <summary>Advanced</summary>
-          {advanced.map((action) => (
-            <NavLink key={action.id} to={`/actions/${action.id}`}>
-              {action.title}
-            </NavLink>
-          ))}
-        </details>
+        <h2>Tools</h2>
+        {tools.map((action) => (
+          <NavLink key={action.id} to={`/actions/${action.id}`}>
+            {action.title}
+          </NavLink>
+        ))}
       </section>
     </nav>
   )
