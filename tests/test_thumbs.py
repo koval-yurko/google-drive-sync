@@ -1,6 +1,6 @@
 import pytest
 
-from photolib.thumbs import SIZES, ThumbnailCache, ThumbnailUnavailable
+from photolib.drive.thumbs import SIZES, ThumbnailCache, ThumbnailUnavailable
 from tests.fakes.fake_drive import FakeDrive
 
 

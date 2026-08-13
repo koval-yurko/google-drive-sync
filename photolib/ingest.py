@@ -1,4 +1,8 @@
-"""The destination walk, shared by Scan Archives and Reorganize Folders.
+"""Indexing the destination folder into the catalog.
+
+Reads Drive and fills `drive_files`; it neither plans nor mutates Drive,
+which is why it sits beside `config.py` rather than in `planning/` or
+`execution/`. Shared by Scan Archives and Reorganize Folders.
 
 The whole tree is collected before anything is written, because
 `ScanRepo.upsert_drive_files` ends with a sweep that deletes every row not

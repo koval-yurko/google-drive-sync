@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Iterator
 
-from photolib import places, scan
+from photolib import ingest, places
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.actions.phases import phase_label
 from photolib.db.geocache_repo import GeocacheRepo
@@ -99,7 +99,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
     # carry its timestamp, so a half-finished index would delete what it had
     # not yet reached. Re-walking is cheap and idempotent.
     try:
-        walked = scan.index_destination(ctx.drive, ctx.conn, root.id)
+        walked = ingest.index_destination(ctx.drive, ctx.conn, root.id)
     except DriveError as exc:
         yield ProgressEvent(
             f"Cannot read the Global Photos folder: {exc}",

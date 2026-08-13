@@ -18,7 +18,7 @@ from photolib.drive.client import DriveClient
 from photolib.drive.writer import DriveWriter
 from photolib.jobs.broker import EventBroker
 from photolib.jobs.runner import JobRunner
-from photolib.thumbs import ThumbnailCache
+from photolib.drive.thumbs import ThumbnailCache
 
 
 def create_app(config: Config | None = None, drive=None) -> FastAPI:

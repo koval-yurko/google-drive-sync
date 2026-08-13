@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from typing import Iterator
 
-from photolib import archives
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.db.scan_repo import ScanRepo
 from photolib.db.settings_repo import PHOTOS_ROOT, ZIP_SOURCE
 from photolib.drive.errors import DriveError
-from photolib.scan import index_destination
+from photolib.ingest import index_destination
+from photolib.ziparchive import source as archives
 
 ID = "scan_archives"
 TITLE = "Scan Archives"
