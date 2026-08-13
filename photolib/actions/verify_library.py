@@ -24,6 +24,7 @@ DESCRIPTION = (
     "Writes nothing."
 )
 ORDER = 90
+GROUP = "tool"
 
 EXAMPLES = 20
 

@@ -5,7 +5,7 @@ import type { ActionSpec } from '../api/types'
 import { Nav } from './Nav'
 
 const ACTIONS = [
-  { id: 'scan_archives', title: 'Scan Archives', description: '', order: 10, group: 'advanced', schema: { type: 'object' } },
+  { id: 'verify_library', title: 'Verify Library', description: '', order: 90, group: 'tool', schema: { type: 'object' } },
 ] as ActionSpec[]
 
 describe('Nav', () => {
@@ -15,8 +15,10 @@ describe('Nav', () => {
         <Nav actions={ACTIONS} />
       </MemoryRouter>,
     )
-    expect(screen.getByRole('link', { name: /library/i }).getAttribute('href')).toBe('/library')
-    expect(screen.getByRole('link', { name: /tags/i }).getAttribute('href')).toBe('/tags')
+    // Exact names, not /library/i — a tool titled "Verify Library" is also
+    // a link whose name contains "library".
+    expect(screen.getByRole('link', { name: 'Library' }).getAttribute('href')).toBe('/library')
+    expect(screen.getByRole('link', { name: 'Tags' }).getAttribute('href')).toBe('/tags')
   })
 
   it('still lists the actions it is given', () => {
@@ -25,17 +27,19 @@ describe('Nav', () => {
         <Nav actions={ACTIONS} />
       </MemoryRouter>,
     )
-    expect(screen.getByRole('link', { name: 'Scan Archives' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Verify Library' })).toBeTruthy()
   })
 
-  it('separates flows from advanced actions', () => {
+  it('puts flows and tools in their own sections', () => {
     const actions = [
       { id: 'sync_archives', title: 'Sync from Archives', description: '', order: 1, group: 'flow', schema: { type: 'object' } },
-      { id: 'scan_archives', title: 'Scan Archives', description: '', order: 10, group: 'advanced', schema: { type: 'object' } },
+      { id: 'verify_library', title: 'Verify Library', description: '', order: 90, group: 'tool', schema: { type: 'object' } },
     ] as ActionSpec[]
     render(<MemoryRouter><Nav actions={actions} /></MemoryRouter>)
     expect(screen.getByRole('heading', { name: 'Flows' })).toBeInTheDocument()
-    expect(screen.getByText('Advanced')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Tools' })).toBeInTheDocument()
+    expect(screen.queryByText('Advanced')).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Sync from Archives' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Verify Library' })).toBeInTheDocument()
   })
 })
