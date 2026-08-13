@@ -110,7 +110,6 @@ through.
 | Plan Organization | Resolves dates, countries, duplicate verdicts, destinations | No |
 | Organize Photos | Uploads every planned file into its destination bucket folder | Yes |
 | Repack Buckets | Moves every indexed file into its bucket folder, trashing what's left empty | Yes |
-| Clear Duplicates | Trashes byte-identical copies inside the Global Photos folder, keeping one | Yes |
 | Sync Tags to Drive | Mirrors tags onto each file's `appProperties` | Yes |
 | Verify Library | Compares the catalog against what Drive actually holds and reports drift | No |
 

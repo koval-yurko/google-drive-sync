@@ -113,3 +113,24 @@ def test_apply_removal_is_safe_to_replay(conn):
         "SELECT trashed_at FROM drive_files WHERE drive_id = 'a'"
     ).fetchone()
     assert row["trashed_at"] is not None
+
+
+def test_apply_removal_stamps_the_catalog_with_the_trash_time(conn):
+    """Trashing must record `trashed_at`, so the Library stops showing the
+    copy immediately rather than waiting for the next Scan."""
+    conn.execute(
+        "INSERT INTO drive_files "
+        "(drive_id, name, parent_path, md5, size, mime_type) "
+        "VALUES ('a', 'one.heic', '2025-01', 'same', 4, 'image/heic')"
+    )
+    conn.commit()
+    removals, _zero, _total = plan_removals(_library(), conn, "root")
+    assert removals, "fixture must produce at least one removal"
+
+    apply_removal(_IdempotentTrashWriter(), removals[0], conn)
+
+    row = conn.execute(
+        "SELECT trashed_at FROM drive_files WHERE drive_id = ?",
+        (removals[0].drive_id,),
+    ).fetchone()
+    assert row["trashed_at"] is not None
