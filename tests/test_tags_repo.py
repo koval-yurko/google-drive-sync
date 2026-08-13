@@ -195,3 +195,79 @@ def test_ensure_returns_the_existing_tag(conn):
     repo = TagsRepo(conn)
     created = repo.create("Family")
     assert repo.ensure(created["slug"])["id"] == created["id"]
+
+
+def _seed_sync(conn):
+    conn.execute(
+        "INSERT INTO drive_files (drive_id, name, parent_path)"
+        " VALUES ('d1', 'IMG_1.HEIC', 'a')"
+    )
+    conn.execute(
+        "INSERT INTO drive_files (drive_id, name, parent_path, synced_tags)"
+        " VALUES ('d2', 'IMG_2.HEIC', 'b', 'beach')"
+    )
+    # No tags now, none written last time: not a candidate.
+    conn.execute(
+        "INSERT INTO drive_files (drive_id, name, parent_path)"
+        " VALUES ('d3', 'IMG_3.HEIC', 'c')"
+    )
+    # Trashed: never a candidate, even with tags.
+    conn.execute(
+        "INSERT INTO drive_files (drive_id, name, parent_path, synced_tags,"
+        " trashed_at) VALUES ('d4', 'IMG_4.HEIC', 'd', 'x', 'now')"
+    )
+    conn.commit()
+
+    repo = TagsRepo(conn)
+    tag = repo.create("holiday")
+    repo.add_files(tag["id"], ["d1"])
+    return repo
+
+
+def test_pending_sync_finds_tagged_and_previously_synced_files(conn):
+    repo = _seed_sync(conn)
+    assert {row["drive_id"] for row in repo.pending_sync()} == {"d1", "d2"}
+
+
+def test_pending_sync_excludes_trashed_files(conn):
+    repo = _seed_sync(conn)
+    assert "d4" not in {row["drive_id"] for row in repo.pending_sync()}
+
+
+def test_pending_sync_honours_a_limit_and_treats_zero_as_no_limit(conn):
+    repo = _seed_sync(conn)
+    assert len(repo.pending_sync(limit=1)) == 1
+    assert len(repo.pending_sync(limit=0)) == 2
+
+
+def test_mark_synced_writes_a_sorted_comma_joined_slug_list(conn):
+    repo = _seed_sync(conn)
+    repo.mark_synced("d1", {"zebra", "apple"})
+    row = conn.execute(
+        "SELECT synced_tags FROM drive_files WHERE drive_id = 'd1'"
+    ).fetchone()
+    assert row["synced_tags"] == "apple,zebra"
+
+
+def test_mark_synced_writes_an_empty_string_for_no_tags(conn):
+    """'Drive holds no tags' is different from 'we never looked'."""
+    repo = _seed_sync(conn)
+    repo.mark_synced("d2", set())
+    row = conn.execute(
+        "SELECT synced_tags FROM drive_files WHERE drive_id = 'd2'"
+    ).fetchone()
+    assert row["synced_tags"] == ""
+
+
+def test_orphaned_drive_ids_finds_tags_whose_file_is_gone(conn):
+    repo = _seed_sync(conn)
+    tag = repo.create("ghost")
+    repo.add_files(tag["id"], ["d1"])
+    conn.execute("DELETE FROM drive_files WHERE drive_id = 'd1'")
+    conn.commit()
+    assert repo.orphaned_drive_ids() == ["d1"]
+
+
+def test_orphaned_drive_ids_is_empty_when_every_tagged_file_exists(conn):
+    repo = _seed_sync(conn)
+    assert repo.orphaned_drive_ids() == []

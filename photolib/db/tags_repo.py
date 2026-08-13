@@ -221,3 +221,53 @@ class TagsRepo:
             ):
                 grouped.setdefault(row["drive_id"], set()).add(row["slug"])
         return grouped
+
+    # ---------- Drive sync ----------
+
+    def pending_sync(self, limit: int = 0) -> list[sqlite3.Row]:
+        """Files with tags now, or tags written last time. Trashed excluded.
+
+        A file whose tags were removed still needs a visit, to clear the
+        `t_*` appProperties Drive is still carrying — hence the second arm.
+        `limit=0` means every candidate.
+        """
+        sql = (
+            "SELECT drive_id, name, synced_tags FROM drive_files "
+            "WHERE trashed_at IS NULL AND ("
+            "  drive_id IN (SELECT drive_id FROM file_tags) "
+            "  OR (synced_tags IS NOT NULL AND synced_tags != '')"
+            ") ORDER BY parent_path, name"
+        )
+        with self._lock:
+            if limit > 0:
+                return list(self._conn.execute(f"{sql} LIMIT ?", (limit,)))
+            return list(self._conn.execute(sql))
+
+    def mark_synced(self, drive_id: str, slugs: set[str]) -> None:
+        """Record the slug list now on the file in Drive.
+
+        The comma-joined sorted form is the storage format for
+        `drive_files.synced_tags`; it is written here and nowhere else, and
+        `ScanRepo.set_enrichment` reads the same shape back from Drive.
+        An empty set records "Drive holds no tags", which is not the same
+        as NULL's "we never looked".
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE drive_files SET synced_tags = ? WHERE drive_id = ?",
+                (",".join(sorted(slugs)), drive_id),
+            )
+            self._conn.commit()
+
+    def orphaned_drive_ids(self) -> list[str]:
+        """Tagged drive ids with no matching row in `drive_files`."""
+        with self._lock:
+            return [
+                row["drive_id"]
+                for row in self._conn.execute(
+                    "SELECT DISTINCT ft.drive_id FROM file_tags ft "
+                    "LEFT JOIN drive_files d ON d.drive_id = ft.drive_id "
+                    "WHERE d.drive_id IS NULL "
+                    "ORDER BY ft.drive_id"
+                )
+            ]

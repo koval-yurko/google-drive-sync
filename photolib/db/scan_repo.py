@@ -206,7 +206,7 @@ class ScanRepo:
 
         `synced_tags` is the comma-joined, sorted slug list Enrich just
         imported from the file's `t_*` appProperties — the same format
-        `sync_tags` writes at `sync_tags.py:162`. Leaving it `None` (the
+        `TagsRepo.mark_synced` writes. Leaving it `None` (the
         default) leaves the column untouched, for callers that have no tag
         information to report; passing `""` explicitly records "Drive held
         no tags", which is different from "we never looked".
