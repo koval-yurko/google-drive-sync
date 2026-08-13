@@ -205,7 +205,7 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
 
     # ---- Repack (plan) -----------------------------------------------
     if not items.all(run_id, "repack"):
-        planned = layout.plan_moves(ctx.drive, ctx.conn, root.id, exclude=doomed)
+        planned = layout.plan_moves(ctx.conn, exclude=doomed)
         for move in planned:
             items.put(run_id, "repack", move.drive_id, run_id, "pending",
                       move.__dict__)

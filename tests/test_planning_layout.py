@@ -26,12 +26,12 @@ def _seed(conn, files: list[tuple[str, str, str]]) -> None:
 
 def test_a_file_already_in_its_bucket_produces_no_move(conn):
     _seed(conn, [("d1", "2025-01", "2025-01")])
-    assert plan_moves(FakeDrive(), conn, "root") == []
+    assert plan_moves(conn) == []
 
 
 def test_a_file_in_the_wrong_folder_is_moved(conn):
     _seed(conn, [("d1", "back_2019", "2025-01")])
-    moves = plan_moves(FakeDrive(), conn, "root")
+    moves = plan_moves(conn)
     assert [(m.drive_id, m.from_path, m.to_folder) for m in moves] == [
         ("d1", "back_2019", "2025-01")
     ]
@@ -52,12 +52,9 @@ def test_excluded_files_do_not_reserve_bucket_space(conn):
         [(f"d{i}", "back_2019", "2025-01") for i in range(150)]
         + [("n1", "2025-02", "2025-02")],
     )
-    with_all = {m.to_folder for m in plan_moves(FakeDrive(), conn, "root")}
+    with_all = {m.to_folder for m in plan_moves(conn)}
     doomed = {f"d{i}" for i in range(100)}
-    without = {
-        m.to_folder
-        for m in plan_moves(FakeDrive(), conn, "root", exclude=doomed)
-    }
+    without = {m.to_folder for m in plan_moves(conn, exclude=doomed)}
     assert with_all == {"2025-01"}
     assert without != with_all
 
@@ -73,7 +70,7 @@ def test_an_undated_file_goes_to_the_unknown_folder(conn):
         "'video/quicktime', NULL)"
     )
     conn.commit()
-    moves = plan_moves(FakeDrive(), conn, "root")
+    moves = plan_moves(conn)
     assert [(m.drive_id, m.to_folder) for m in moves] == [("d9", "unknown-date")]
 
 
@@ -101,7 +98,7 @@ def test_a_catalogued_undated_file_ignores_its_drive_capture_hint(conn):
     # The stale hint says 2025-01; the catalog says undated and wins.
     _seed(conn, [("d4", "2023-12", "2025-01")])
 
-    moves = plan_moves(FakeDrive(), conn, "root")
+    moves = plan_moves(conn)
     assert [(m.drive_id, m.to_folder) for m in moves] == [("d4", "unknown-date")]
 
 
@@ -116,7 +113,7 @@ def test_a_name_collision_in_the_destination_is_renamed(conn):
         ],
     )
     conn.commit()
-    names = {m.new_name for m in plan_moves(FakeDrive(), conn, "root")}
+    names = {m.new_name for m in plan_moves(conn)}
     assert len(names) == 2, "two files cannot land on one name"
 
 

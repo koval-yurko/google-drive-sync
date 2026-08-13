@@ -74,16 +74,13 @@ def moves_from_targets(rows, targets, names) -> list[Move]:
     return moves
 
 
-def plan_moves(
-    drive, conn, root_id: str, *, exclude: set[str] = frozenset()
-) -> list[Move]:
+def plan_moves(conn, *, exclude: set[str] = frozenset()) -> list[Move]:
     """Every live catalogued file whose bucket target differs from where it
     currently sits, renamed as needed to avoid colliding with a file
     already at that destination or with another move landing there first.
 
-    `exclude` drops files dedupe is about to trash from consideration and
-    from the space they would otherwise reserve — see
-    `LayoutRepo.capture_histogram`.
+    `exclude` drops files the duplicate plan is about to trash from
+    consideration and from the space they would otherwise reserve.
     """
     rows, targets, names = targets_for(conn, exclude)
     return moves_from_targets(rows, targets, names)
