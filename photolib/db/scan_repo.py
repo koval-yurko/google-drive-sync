@@ -232,6 +232,24 @@ class ScanRepo:
                 )
             )
 
+    def mark_trashed(self, drive_id: str, when: str) -> None:
+        """Stamp a file as trashed. Safe to replay: an overwrite of a field
+        with a value it may already hold."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE drive_files SET trashed_at = ? WHERE drive_id = ?",
+                (when, drive_id),
+            )
+            self._conn.commit()
+
+    def archive_modified_time(self, drive_id: str) -> str | None:
+        """The archive's Drive mtime, or None if no such archive is indexed."""
+        row = self._conn.execute(
+            "SELECT modified_time FROM archives WHERE drive_id = ?",
+            (drive_id,),
+        ).fetchone()
+        return row["modified_time"] if row is not None else None
+
     # ---------- reporting ----------
 
     def counts(self) -> dict[str, int]:

@@ -178,3 +178,49 @@ def test_set_enrichment_and_unenriched(conn):
         "SELECT * FROM drive_files WHERE drive_id = 'd1'"
     ).fetchone()
     assert (row["country"], row["metadata_source"]) == ("Greece", "exif")
+
+
+def test_mark_trashed_stamps_the_row(conn):
+    conn.execute(
+        "INSERT INTO drive_files (drive_id, name, parent_path)"
+        " VALUES ('d1', 'IMG_1.HEIC', 'p')"
+    )
+    conn.commit()
+
+    ScanRepo(conn).mark_trashed("d1", "2026-08-13T00:00:00+00:00")
+
+    row = conn.execute(
+        "SELECT trashed_at FROM drive_files WHERE drive_id = 'd1'"
+    ).fetchone()
+    assert row["trashed_at"] == "2026-08-13T00:00:00+00:00"
+
+
+def test_mark_trashed_is_safe_to_replay(conn):
+    """A resumed run can trash the same file twice; the second stamp just
+    overwrites the first."""
+    conn.execute(
+        "INSERT INTO drive_files (drive_id, name, parent_path)"
+        " VALUES ('d1', 'IMG_1.HEIC', 'p')"
+    )
+    conn.commit()
+
+    repo = ScanRepo(conn)
+    repo.mark_trashed("d1", "first")
+    repo.mark_trashed("d1", "second")
+
+    row = conn.execute(
+        "SELECT trashed_at FROM drive_files WHERE drive_id = 'd1'"
+    ).fetchone()
+    assert row["trashed_at"] == "second"
+
+
+def test_archive_modified_time_returns_the_value_or_none(conn):
+    conn.execute(
+        "INSERT INTO archives (drive_id, name, size, modified_time)"
+        " VALUES ('z1', 'a.zip', 1, '2024-01-01T00:00:00Z')"
+    )
+    conn.commit()
+
+    repo = ScanRepo(conn)
+    assert repo.archive_modified_time("z1") == "2024-01-01T00:00:00Z"
+    assert repo.archive_modified_time("nope") is None
