@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from photolib.actions import check_connection
+from photolib.actions.steps import check_connection
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.actions.registry import UnknownActionError, all_actions, discovery_errors, get_action
 from photolib.config import Config
@@ -25,6 +25,27 @@ def test_the_registry_holds_only_the_flows_and_the_tools():
     ids = {spec.id for spec in all_actions()}
     assert ids == {"sync_archives", "reorganize_library", "sync_tags",
                    "verify_library"}
+
+
+def test_modules_under_steps_are_not_discovered_as_actions():
+    """The subpackage is the mechanism, not a naming convention.
+
+    pkgutil.iter_modules does not recurse, so a module in steps/ cannot
+    become a page no matter what attributes it declares. If someone
+    flattens the package back out, this fails.
+    """
+    ids = {spec.id for spec in all_actions()}
+    for phase in (
+        "check_connection", "scan_archives", "pair_metadata",
+        "plan_organize", "organize",
+    ):
+        assert phase not in ids
+
+    # ...and they are still importable and still runnable by the flow.
+    from photolib.actions.steps import organize
+
+    assert callable(organize.run)
+    assert organize.Params().model_dump() is not None
 
 
 def test_registry_specs_are_complete():
@@ -281,7 +302,9 @@ def run(ctx: ActionContext, params: Params) -> Iterator[ProgressEvent]:
 def test_actions_default_to_the_advanced_group():
     from photolib.actions.registry import get_action
 
-    assert get_action("scan_archives").group == "advanced"
+    # sync_tags declares no GROUP and so falls back to base.py's default.
+    # Plan B folds it into Reorganize Folders and retires the default with it.
+    assert get_action("sync_tags").group == "advanced"
 
 
 def test_flows_sort_ahead_of_advanced_actions():

@@ -5,15 +5,16 @@ import threading
 
 import pytest
 
-from photolib.actions import organize, verify_library
+from photolib.actions import verify_library
+from photolib.actions.steps import organize
 from photolib.actions.base import ActionContext
-from photolib.actions.organize import Params, run
-from photolib.actions.pair_metadata import Params as PairParams
-from photolib.actions.pair_metadata import run as pair
-from photolib.actions.plan_organize import Params as PlanParams
-from photolib.actions.plan_organize import run as plan
-from photolib.actions.scan_archives import Params as ScanParams
-from photolib.actions.scan_archives import run as scan
+from photolib.actions.steps.organize import Params, run
+from photolib.actions.steps.pair_metadata import Params as PairParams
+from photolib.actions.steps.pair_metadata import run as pair
+from photolib.actions.steps.plan_organize import Params as PlanParams
+from photolib.actions.steps.plan_organize import run as plan
+from photolib.actions.steps.scan_archives import Params as ScanParams
+from photolib.actions.steps.scan_archives import run as scan
 from photolib.config import Config
 from photolib.db import catalog
 from photolib.db.media_repo import MediaRepo
@@ -164,7 +165,7 @@ def test_a_failed_file_is_recorded_and_the_others_still_run(ctx, monkeypatch):
             raise transfer.TransferError("CRC mismatch", "crc")
         return real(**kwargs)
 
-    monkeypatch.setattr("photolib.actions.organize.transfer_entry", explode)
+    monkeypatch.setattr("photolib.actions.steps.organize.transfer_entry", explode)
     list(run(ctx, Params()))
     rows = {r["name"]: r for r in MediaRepo(ctx.conn).all_media()}
     assert rows["IMG_2.MOV"]["upload_status"] == "error"
@@ -271,7 +272,7 @@ def test_cancelling_stops_new_uploads_from_starting(ctx, monkeypatch):
         ctx.cancelled.set()
         return result
 
-    monkeypatch.setattr("photolib.actions.organize.transfer_entry", spy)
+    monkeypatch.setattr("photolib.actions.steps.organize.transfer_entry", spy)
     list(run(ctx, Params(workers=1)))
 
     found = uploaded_names(ctx)

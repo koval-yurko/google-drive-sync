@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Iterator
 
-from photolib.actions import (
+from photolib.actions.steps import (
     check_connection,
     organize,
     pair_metadata,

@@ -1,7 +1,7 @@
 import pytest
 
 from photolib.actions.base import ActionContext
-from photolib.actions.scan_archives import Params, run
+from photolib.actions.steps.scan_archives import Params, run
 from photolib.config import Config
 from photolib.db import catalog
 from photolib.db.scan_repo import ScanRepo

@@ -2,7 +2,8 @@ import threading
 
 import pytest
 
-from photolib.actions import check_connection, scan_archives, sync_archives
+from photolib.actions import sync_archives
+from photolib.actions.steps import check_connection, scan_archives
 from photolib.actions.base import ActionContext, ProgressEvent
 from photolib.config import Config
 from photolib.db.job_items_repo import JobItemsRepo
