@@ -17,7 +17,7 @@ def client(tmp_path, monkeypatch):
 
 
 def finished_job(client) -> dict:
-    job = client.post("/api/actions/check_connection/run", json={}).json()
+    job = client.post("/api/actions/verify_library/run", json={}).json()
     for _ in range(100):
         current = client.get(f"/api/jobs/{job['id']}").json()
         if current["status"] in {"done", "failed"}:
@@ -58,7 +58,7 @@ def test_stream_endpoint_serves_event_stream(client):
 
 
 def test_cancel_route_rejects_a_finished_job(client):
-    job = client.post("/api/actions/check_connection/run", json={}).json()
+    job = client.post("/api/actions/verify_library/run", json={}).json()
     client.app.state.runner.wait_idle()
     assert client.post(f"/api/jobs/{job['id']}/cancel").status_code == 409
 
@@ -68,7 +68,7 @@ def test_cancel_route_404s_on_an_unknown_job(client):
 
 
 def test_resume_reuses_the_run_id_and_records_the_source(client):
-    job = client.post("/api/actions/check_connection/run", json={}).json()
+    job = client.post("/api/actions/verify_library/run", json={}).json()
     client.app.state.runner.wait_idle()
     client.app.state.jobs.mark_failed(job["id"], "boom")
 
@@ -79,14 +79,14 @@ def test_resume_reuses_the_run_id_and_records_the_source(client):
 
 
 def test_resume_rejects_a_successful_job(client):
-    job = client.post("/api/actions/check_connection/run", json={}).json()
+    job = client.post("/api/actions/verify_library/run", json={}).json()
     client.app.state.runner.wait_idle()
     assert client.post(f"/api/jobs/{job['id']}/resume").status_code == 409
 
 
 def test_resume_injects_run_id_only_when_the_action_declares_it(client):
-    """check_connection has no run_id param; extra='forbid' would reject it."""
-    job = client.post("/api/actions/check_connection/run", json={}).json()
+    """verify_library has no run_id param; extra='forbid' would reject it."""
+    job = client.post("/api/actions/verify_library/run", json={}).json()
     client.app.state.runner.wait_idle()
     client.app.state.jobs.mark_failed(job["id"], "boom")
     resumed = client.post(f"/api/jobs/{job['id']}/resume").json()
@@ -105,7 +105,7 @@ def test_a_job_left_running_is_failed_on_the_next_app_start_and_then_resumable(
 
     app1 = create_app(config=Config.load(), drive=FakeDrive())
     with TestClient(app1) as c1:
-        job = c1.post("/api/actions/check_connection/run", json={}).json()
+        job = c1.post("/api/actions/verify_library/run", json={}).json()
         c1.app.state.runner.wait_idle()
         # Force it back to 'running', standing in for a process that died
         # mid-job rather than one that finished normally.
@@ -126,7 +126,7 @@ def test_a_job_left_running_is_failed_on_the_next_app_start_and_then_resumable(
 def test_items_route_returns_the_ledger(client):
     from photolib.db.job_items_repo import JobItemsRepo
 
-    job = client.post("/api/actions/check_connection/run", json={}).json()
+    job = client.post("/api/actions/verify_library/run", json={}).json()
     client.app.state.runner.wait_idle()
     JobItemsRepo(client.app.state.conn).enumerate(
         job["run_id"], "work", ["a", "b"], job["id"]

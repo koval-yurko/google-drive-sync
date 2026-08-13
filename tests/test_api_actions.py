@@ -40,16 +40,16 @@ def sync_client(tmp_path, monkeypatch):
 
 def test_lists_actions_with_schema(client):
     actions = client.get("/api/actions").json()
-    assert any(a["id"] == "check_connection" for a in actions)
-    spec = next(a for a in actions if a["id"] == "check_connection")
-    assert spec["title"] == "Check Connection"
+    assert any(a["id"] == "verify_library" for a in actions)
+    spec = next(a for a in actions if a["id"] == "verify_library")
+    assert spec["title"] == "Verify Library"
     assert spec["description"]
     assert spec["schema"]["type"] == "object"
 
 
 def test_run_creates_a_job(client):
-    job = client.post("/api/actions/check_connection/run", json={}).json()
-    assert job["action"] == "check_connection"
+    job = client.post("/api/actions/verify_library/run", json={}).json()
+    assert job["action"] == "verify_library"
     assert job["status"] in {"queued", "running", "done"}
     assert job["id"]
 
@@ -59,7 +59,7 @@ def test_run_unknown_action_returns_404(client):
 
 
 def test_run_with_unknown_params_returns_422(client):
-    response = client.post("/api/actions/check_connection/run", json={"bad": 1})
+    response = client.post("/api/actions/verify_library/run", json={"bad": 1})
     assert response.status_code == 422
 
 
