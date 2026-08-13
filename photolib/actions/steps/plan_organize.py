@@ -14,12 +14,13 @@ import os
 from datetime import datetime, timezone
 from typing import Iterator
 
-from photolib import buckets, places, takeout
+from photolib import places
 from photolib.actions.base import ActionContext, ActionParams, ProgressEvent
 from photolib.db.geocache_repo import GeocacheRepo
 from photolib.db.layout_repo import LayoutRepo
 from photolib.db.media_repo import MediaRepo
 from photolib.db.scan_repo import ScanRepo
+from photolib.planning import buckets, takeout
 
 ID = "plan_organize"
 TITLE = "Plan Organization"

@@ -3,7 +3,7 @@
 import threading
 from datetime import datetime
 
-from photolib.downloads import (
+from photolib.execution.downloads import (
     InflightRegistry,
     observe,
     run_folder_name,

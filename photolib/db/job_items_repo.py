@@ -15,8 +15,8 @@ is no transaction to share even locally. If the process dies between the two,
 the item is still `pending` (or `failed`) and `pending()` hands it back on
 resume, so its effect runs again. Every effect this table checkpoints must
 therefore tolerate being applied twice — treat "already in the target state"
-as success rather than erroring or corrupting local state. `dedupe.py` and
-`repack.py` document how each of their effects meets that bar.
+as success rather than erroring or corrupting local state. The modules in
+`photolib/execution/` document how each of their effects meets that bar.
 """
 
 from __future__ import annotations
@@ -101,8 +101,9 @@ class JobItemsRepo:
         """Update an item's state, folding `detail` into whatever plan is
         already stored rather than replacing it.
 
-        The persisted `detail` is a dry run's plan — e.g. a `dedupe.Removal`
-        or `repack.Move` — and confirming reads it straight back to execute
+        The persisted `detail` is a dry run's plan — e.g. a
+        `planning.duplicates.Removal` or a `planning.layout.Move` — and
+        confirming reads it straight back to execute
         it. A caller marking an item `failed` passes a small dict like
         `{"error": str(exc)}`; merging it on top of the existing plan keeps
         both the error *and* the plan a resume needs, instead of the error

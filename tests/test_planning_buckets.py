@@ -1,4 +1,4 @@
-from photolib.buckets import UNKNOWN_FOLDER, folder_map, month_of, pack
+from photolib.planning.buckets import UNKNOWN_FOLDER, folder_map, month_of, pack
 
 
 def test_month_of_formats_utc_and_tolerates_none():

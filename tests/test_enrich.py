@@ -1,5 +1,5 @@
 from photolib.drive.client import DriveFile
-from photolib.enrich import enrichment_for
+from photolib.planning.enrich import enrichment_for
 
 
 class _Geocoder:

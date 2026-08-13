@@ -7,15 +7,15 @@
   there is one, otherwise the first copy by folder and name;
 - zero-byte files share an MD5 without being copies of anything. They are
   reported and left alone.
+
+Planning only — `photolib.execution.trash` does the trashing.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 
 from photolib.db.media_repo import MediaRepo
-from photolib.db.scan_repo import ScanRepo
 
 
 @dataclass
@@ -81,19 +81,3 @@ def plan_removals(drive, conn, root_id: str) -> tuple[list[Removal], list[str], 
             ))
 
     return removals, empty_ids, len(files)
-
-
-def apply_removal(writer, removal: Removal, conn) -> None:
-    """Trash the redundant copy and stamp it trashed in the catalog.
-
-    Safe to replay: Drive's trash guide says a trashed file stays retrievable
-    by `files.get` — and therefore still patchable — until it is
-    auto-deleted 30 days later
-    (https://developers.google.com/workspace/drive/api/guides/delete), so
-    setting `trashed: true` on a file that is already trashed is just
-    resetting a field to the value it already has, not an error. The
-    `UPDATE` below is an ordinary overwrite, harmless to repeat.
-    """
-    writer.trash(removal.drive_id)
-    stamp = datetime.now(timezone.utc).isoformat()
-    ScanRepo(conn).mark_trashed(removal.drive_id, stamp)

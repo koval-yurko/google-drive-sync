@@ -1,10 +1,8 @@
-"""Plan moving every live file into its ~100-file bucket folder, and the
-sweep of folders left empty afterward.
+"""Where every live file belongs: its bucket folder, and the folders left
+empty once everything has moved.
 
-Metadata-only: a move is one `files.update` per file — no bytes are
-downloaded or re-uploaded. The same call renames arrivals that would
-collide inside their destination folder and strips the retired `place`
-property. Folders left empty are trashed, never deleted.
+Planning only — nothing here mutates Drive. `photolib.execution.moves`
+enacts what these functions decide.
 """
 
 from __future__ import annotations
@@ -13,9 +11,8 @@ import os
 from collections import defaultdict
 from dataclasses import dataclass
 
-from photolib import buckets
 from photolib.db.layout_repo import LayoutRepo
-from photolib.drive.errors import DriveError
+from photolib.planning import buckets
 
 
 @dataclass
@@ -92,45 +89,6 @@ def plan_moves(
     return moves_from_targets(rows, targets, names)
 
 
-def apply_move(
-    writer, conn, move: Move, folder_ids: dict[str, str], drive=None
-) -> None:
-    """Reparent one file to its planned bucket and record the new location.
-
-    Replay hazard: a resumed run can call this a second time for a move
-    whose Drive effect already landed on an earlier attempt — see
-    `photolib.db.job_items_repo`'s module docstring for why. On that second
-    call `remove_parent` names a parent the file no longer has. The Drive
-    v3 `files.update` reference
-    (https://developers.google.com/workspace/drive/api/reference/rest/v3/files/update)
-    documents what `addParents`/`removeParents` do but not what happens when
-    the named parent is already absent, and no other authoritative source
-    settles it either way. Rather than gamble on undocumented behaviour,
-    a `DriveError` from the move is treated as success — not re-raised — when
-    `drive` confirms the file already sits in the target folder, which is
-    the state this call was trying to reach regardless of why the API call
-    itself failed. Passing `drive=None` (the default) restores the old,
-    unguarded behaviour.
-    """
-    try:
-        writer.move(
-            move.drive_id,
-            add_parent=folder_ids[move.to_folder],
-            remove_parent=folder_ids[move.from_path],
-            name=None if move.new_name == move.name else move.new_name,
-            properties={"place": None},
-        )
-    except DriveError:
-        already_moved = (
-            drive is not None
-            and folder_ids[move.to_folder]
-            in drive.get_file(move.drive_id).parents
-        )
-        if not already_moved:
-            raise
-    LayoutRepo(conn).record_move(move.drive_id, move.to_folder, move.new_name)
-
-
 def folder_paths(drive, root_id: str) -> dict[str, str]:
     """Every folder path under the root, mapped to its id. '' is the root."""
     paths = {"": root_id}
@@ -142,16 +100,6 @@ def folder_paths(drive, root_id: str) -> dict[str, str]:
             paths[child_path] = child.id
             stack.append((child.id, child_path))
     return paths
-
-
-def ensure_folders(writer, root_id: str, folders: list[str]) -> dict[str, str]:
-    """Find or create each named bucket folder directly under the root.
-
-    Must run sequentially: Drive would happily create the same folder
-    twice, so calling this concurrently could silently split a month
-    across two folders.
-    """
-    return {name: writer.ensure_folder(root_id, name).id for name in folders}
 
 
 def plan_sweep(drive, root_id: str) -> list[tuple[str, str]]:
@@ -177,14 +125,3 @@ def plan_sweep(drive, root_id: str) -> list[tuple[str, str]]:
 
     _visit(root_id)
     return swept
-
-
-def apply_sweep(writer, folder_id: str) -> None:
-    """Trash one folder found empty by `plan_sweep`.
-
-    Safe to replay for the same reason as `dedupe.apply_removal`: Drive
-    keeps a trashed item retrievable for 30 days
-    (https://developers.google.com/workspace/drive/api/guides/delete), so
-    trashing an already-trashed folder is not an error.
-    """
-    writer.trash(folder_id)

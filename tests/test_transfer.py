@@ -5,7 +5,7 @@ import zlib
 
 import pytest
 
-from photolib import transfer
+from photolib.execution import transfer
 from photolib.drive.errors import TransientError
 from photolib.ziparchive.reader import ZipEntry, read_central_directory
 from tests.fakes.fake_drive import FakeDrive

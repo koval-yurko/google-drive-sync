@@ -1,6 +1,6 @@
 import pytest
 
-from photolib import takeout
+from photolib.planning import takeout
 
 
 @pytest.mark.parametrize(

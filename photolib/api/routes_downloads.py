@@ -6,7 +6,7 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Request
 
-from photolib.downloads import observe, stale_runs
+from photolib.execution.downloads import observe, stale_runs
 
 router = APIRouter(tags=["downloads"])
 
