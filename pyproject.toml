@@ -18,6 +18,7 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "anyio>=4.6",
+    "import-linter>=2.0",
 ]
 
 [build-system]
@@ -37,3 +38,36 @@ markers = [
     "live: hits the real Google Drive API; deselected by default",
 ]
 addopts = "-m 'not live'"
+
+[tool.importlinter]
+root_package = "photolib"
+
+[[tool.importlinter.contracts]]
+name = "Layers run one way"
+type = "layers"
+layers = [
+    "photolib.api",
+    "photolib.actions",
+    "photolib.execution",
+    "photolib.planning",
+    "photolib.db",
+    "photolib.config",
+]
+
+[[tool.importlinter.contracts]]
+name = "Planning decides, it never mutates"
+type = "forbidden"
+source_modules = ["photolib.planning"]
+forbidden_modules = ["photolib.execution"]
+
+[[tool.importlinter.contracts]]
+name = "Persistence does not know what a ZIP archive is"
+type = "forbidden"
+source_modules = ["photolib.db"]
+forbidden_modules = ["photolib.ziparchive"]
+
+[[tool.importlinter.contracts]]
+name = "Planning does not depend on the Drive transport"
+type = "forbidden"
+source_modules = ["photolib.planning"]
+forbidden_modules = ["photolib.drive"]

@@ -9,10 +9,20 @@ and nothing else — no filename guessing, no rules engine.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-
-from photolib.drive.client import DriveFile
+from typing import Protocol
 
 TAG_PREFIX = "t_"
+
+
+class DriveFileLike(Protocol):
+    """What `enrichment_for` reads off a Drive file.
+    `drive.client.DriveFile` satisfies it."""
+
+    app_properties: dict | None
+
+    def location(self) -> tuple[float, float] | None: ...
+
+    def capture(self) -> tuple[int | None, str]: ...
 
 
 @dataclass
@@ -26,7 +36,7 @@ class Enrichment:
     tag_slugs: list[str] = field(default_factory=list)
 
 
-def enrichment_for(file: DriveFile, geocoder) -> Enrichment:
+def enrichment_for(file: DriveFileLike, geocoder) -> Enrichment:
     """Everything Drive knows about `file`, resolved through `geocoder`."""
     coords = file.location()
     country = None

@@ -5,13 +5,26 @@ from __future__ import annotations
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timezone
-
-from photolib.ziparchive.reader import ZipEntry
+from typing import Protocol
 
 _ENTRY_COLUMNS = (
     "archive_id, path, name, crc32, size, compressed_size, "
     "method, local_header_offset, kind"
 )
+
+
+class ArchiveEntry(Protocol):
+    """The shape `replace_entries` stores. `ziparchive.reader.ZipEntry`
+    satisfies it; naming the shape rather than the class keeps the
+    persistence layer from depending on the ZIP parser."""
+
+    path: str
+    name: str
+    crc32: int
+    size: int
+    compressed_size: int
+    method: int
+    local_header_offset: int
 
 
 def _now() -> str:
@@ -64,7 +77,7 @@ class ScanRepo:
     # ---------- entries ----------
 
     def replace_entries(
-        self, archive_id: int, entries: list[ZipEntry], kinds: dict[str, str]
+        self, archive_id: int, entries: list[ArchiveEntry], kinds: dict[str, str]
     ) -> None:
         # Delete-then-insert: a reader between the two sees an archive with no
         # entries at all, so the pair is held under the connection lock.

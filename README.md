@@ -251,17 +251,26 @@ credentials live in the main checkout, so point the live suite at it:
 
 ## Architecture
 
-- `photolib/drive/` — OAuth token refresh and a REST client over `httpx`
+- `photolib/planning/` — decides what should happen: bucket layout, duplicate
+  detection, Takeout naming rules, metadata enrichment. Takes readers, returns
+  a plan; nothing here mutates Drive
+- `photolib/execution/` — enacts a plan: file transfer, reparenting, trashing,
+  the downloads folder. Every function takes a writer
+- `photolib/db/` — SQLite catalog holding settings, archive indexes, and jobs.
+  The only place SQL lives
+- `photolib/drive/` — OAuth token refresh, a REST client over `httpx`, and a
+  disk cache in front of Drive's thumbnail renderer
 - `photolib/ziparchive/` — reads ZIP indexes and extracts single entries using
   HTTP byte ranges, so a 2.15 GB archive is never downloaded to retrieve one photo
-- `photolib/db/` — SQLite catalog holding settings, archive indexes, and jobs
-- `photolib/thumbs.py` — disk-cached proxy for Drive's thumbnail renders
-- `photolib/downloads.py` — the per-run download folder and the live transfer
-  registry behind `GET /api/downloads`
+- `photolib/ingest.py` — walks the destination folder into the catalog
 - `photolib/actions/` — one module per capability; each becomes a page in the UI
 - `photolib/jobs/` — a background worker that runs actions and streams progress
 - `photolib/api/` — FastAPI routes
 - `web/` — React + Vite frontend
+
+The dependency direction is enforced by `import-linter`; see
+`[tool.importlinter]` in `pyproject.toml`. `uv run lint-imports` checks it, and
+`tests/test_architecture.py` runs it as part of the suite.
 
 ## Adding an action
 
