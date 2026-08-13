@@ -109,7 +109,6 @@ through.
 | Pair Metadata | Matches sidecars to media across archive parts | No |
 | Plan Organization | Resolves dates, countries, duplicate verdicts, destinations | No |
 | Organize Photos | Uploads every planned file into its destination bucket folder | Yes |
-| Repack Buckets | Moves every indexed file into its bucket folder, trashing what's left empty | Yes |
 | Sync Tags to Drive | Mirrors tags onto each file's `appProperties` | Yes |
 | Verify Library | Compares the catalog against what Drive actually holds and reports drift | No |
 

@@ -286,9 +286,3 @@ def test_flows_sort_ahead_of_advanced_actions():
 
     groups = [spec.group for spec in all_actions()]
     assert groups == sorted(groups, key=lambda g: g != "flow")
-
-
-def test_reorganize_is_retitled_repack_buckets():
-    from photolib.actions.registry import get_action
-
-    assert get_action("reorganize").title == "Repack Buckets"
